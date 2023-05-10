@@ -28,10 +28,10 @@ from tqdm import tqdm
 # Data config
 # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
 DATA_DIR = "."
-BUFFER = 32  # Half-size of papyrus patches we'll use as model inputs
-Z_DIM = 2  # Number of slices in the z direction. Max value is 64 - Z_START
+BUFFER = 128  # Half-size of papyrus patches we'll use as model inputs
+Z_DIM = 16  # Number of slices in the z direction. Max value is 64 - Z_START
 Z_START = 0  # Offset of slices in the z direction
-SHARED_HEIGHT = 2000  # Height to resize all papyrii
+SHARED_HEIGHT = 4000  # Height to resize all papyrii
 
 # Model config
 BATCH_SIZE = 32
@@ -64,7 +64,7 @@ class UNet(nn.Module):
             [
                 nn.Sequential(
                     nn.Conv2d(
-                        in_channels if i == 1 else 64 * 2 ** (i - 1),
+                        in_channels if i == 2 else 64 * 2 ** (i - 1),
                         64 * 2**i,
                         kernel_size=3,
                         stride=2,
@@ -76,13 +76,13 @@ class UNet(nn.Module):
                     nn.BatchNorm2d(64 * 2**i),
                     nn.ReLU(),
                 )
-                for i in range(1, 3)
+                for i in range(2, 4)
             ]
         )
 
         self.middle = nn.Sequential(
-            conv_block(256, 256),
-            conv_block(256, 256),
+            conv_block(512, 512),
+            conv_block(512, 512),
         )
 
         self.decoder = nn.ModuleList(
@@ -92,11 +92,11 @@ class UNet(nn.Module):
                     transpose_conv_block(2 ** (i + 6), 2 ** (i + 5)),
                     nn.Upsample(scale_factor=2, mode="nearest"),
                 )
-                for i in range(2, 0, -1)
+                for i in range(3, 1, -1)
             ]
         )
         self.final_decoder = nn.Sequential(
-            nn.Conv2d(64, out_channels, kernel_size=3, padding=1),
+            nn.Conv2d(128, out_channels, kernel_size=3, padding=1),
         )
 
     def forward(self, x):
@@ -290,13 +290,13 @@ print("Id,Predicted", file=open("submission.csv", "w"))
 
 
 def update_submission(predictions_map, index):
-    threshold = 0.85
+    threshold = 0.86
     rle_ = rle(predictions_map, threshold=threshold)
     # print(f"{index}," + rle_ + "\n", file=open('/kaggle/working/submission.csv', 'a'))
     print(f"{index}," + rle_, file=open("submission.csv", "a"))
 
 
-# In[10]:
+# In[ ]:
 
 
 folder = pathlib.Path(DATA_DIR) / "test"
@@ -309,6 +309,7 @@ for p in folder.iterdir():
     predictions_map = resize_ski(
         predictions_map, (original_size[1], original_size[0])
     ).squeeze()
+    # predictions_map.resize((original_size[1], original_size[0]))
     print("resize_ski end")
     update_submission(predictions_map, index)
     print("update_submission end")
