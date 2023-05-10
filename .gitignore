@@ -1,0 +1,15 @@
+*.zip
+*.tif
+*.png
+*.jpg
+*.csv
+*.tfrec
+venv
+__pycache__
+wandb
+*.pth
+*.out
+*.pt
+test/
+train/
+*.keras

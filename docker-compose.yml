@@ -1,0 +1,15 @@
+version: '3'
+services:
+  main:
+    build: .
+    shm_size: 6gb
+    volumes:
+      - ./:/workspace
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: "nvidia"
+              count: all
+              capabilities: [ gpu ]
