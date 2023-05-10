@@ -28,8 +28,8 @@ from tqdm import tqdm
 # Data config
 # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
 DATA_DIR = "."
-BUFFER = 128  # Half-size of papyrus patches we'll use as model inputs
-Z_DIM = 16  # Number of slices in the z direction. Max value is 64 - Z_START
+BUFFER = 32  # Half-size of papyrus patches we'll use as model inputs
+Z_DIM = 32  # Number of slices in the z direction. Max value is 64 - Z_START
 Z_START = 0  # Offset of slices in the z direction
 SHARED_HEIGHT = 4000  # Height to resize all papyrii
 
@@ -246,7 +246,8 @@ def compute_predictions_map(split, index):
             patch_batch = patch_batch.to(device)
             predictions = model(patch_batch)
             predictions = nn.Softmax2d()(predictions)
-            predictions = torch.amax(predictions, dim=1).unsqueeze(dim=1)
+            predictions = predictions[:, 1, :, :].unsqueeze(dim=1)
+            # print(predictions)
             predictions = torch.permute(predictions, (0, 3, 2, 1))
             predictions = (
                 predictions.cpu().numpy()
@@ -290,7 +291,7 @@ print("Id,Predicted", file=open("submission.csv", "w"))
 
 
 def update_submission(predictions_map, index):
-    threshold = 0.86
+    threshold = 0.1
     rle_ = rle(predictions_map, threshold=threshold)
     # print(f"{index}," + rle_ + "\n", file=open('/kaggle/working/submission.csv', 'a'))
     print(f"{index}," + rle_, file=open("submission.csv", "a"))
@@ -309,7 +310,6 @@ for p in folder.iterdir():
     predictions_map = resize_ski(
         predictions_map, (original_size[1], original_size[0])
     ).squeeze()
-    # predictions_map.resize((original_size[1], original_size[0]))
     print("resize_ski end")
     update_submission(predictions_map, index)
     print("update_submission end")
