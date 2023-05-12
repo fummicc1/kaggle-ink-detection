@@ -291,7 +291,7 @@ print("Id,Predicted", file=open("submission.csv", "w"))
 
 
 def update_submission(predictions_map, index):
-    threshold = 0.1
+    threshold = 0.15
     rle_ = rle(predictions_map, threshold=threshold)
     # print(f"{index}," + rle_ + "\n", file=open('/kaggle/working/submission.csv', 'a'))
     print(f"{index}," + rle_, file=open("submission.csv", "a"))
@@ -304,6 +304,7 @@ folder = pathlib.Path(DATA_DIR) / "test"
 for p in folder.iterdir():
     index = p.stem
     predictions_map = compute_predictions_map(split="test", index=index)
+    print("predictions_map", predictions_map)
     print("compute_predictions_map end")
     original_size = Image.open(DATA_DIR + f"/test/{index}/mask.png").size
     print("original_size end")
