@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[ ]:
+# In[134]:
 
 
 import numpy as np
@@ -28,8 +28,8 @@ import cv2
 # Data config
 DATA_DIR = '/home/fummicc1/codes/competitions/kaggle-ink-detection'
 BUFFER = 64  # Half-size of papyrus patches we'll use as model inputs
-Z_DIM = 32  # Number of slices in the z direction. Max value is 64 - Z_START
-Z_START = 16  # Offset of slices in the z direction
+Z_LIST = list(range(0, 65, 4))  # Offset of slices in the z direction
+Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
 SHARED_HEIGHT = 4000  # Height to resize all papyrii
 
 # (y, x)
@@ -47,7 +47,7 @@ num_workers = 2
 exp = 1e-7
 
 
-# In[ ]:
+# In[135]:
 
 
 plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
@@ -55,7 +55,7 @@ plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
 
 # ## Load up the training data
 
-# In[ ]:
+# In[136]:
 
 
 def resize(img):
@@ -90,7 +90,7 @@ ax2.imshow(labels, cmap='gray')
 plt.show()
 
 
-# In[ ]:
+# In[137]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -118,7 +118,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[ ]:
+# In[138]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -135,12 +135,14 @@ ax3.imshow(labels_train_3, cmap='gray')
 plt.show()
 
 
-# In[ ]:
+# In[139]:
 
 
 def load_volume(split, index):
     # Load the 3d x-ray scan, one slice at a time
-    z_slices_fnames = sorted(glob.glob(f"{DATA_DIR}/{split}/{index}/surface_volume/*.tif"))[Z_START:Z_START + Z_DIM]
+    all = sorted(glob.glob(f"{DATA_DIR}/{split}/{index}/surface_volume/*.tif"))
+    z_slices_fnames = [all[i] for i in range(len(all)) if i in Z_LIST]
+    assert len(z_slices_fnames) == Z_DIM
     z_slices = []
     for z, filename in  tqdm(enumerate(z_slices_fnames)):
         img = cv2.imread(filename, -1)
@@ -149,7 +151,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[ ]:
+# In[140]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -165,7 +167,7 @@ volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1
 print(f"total volume: {volume.shape}")
 
 
-# In[ ]:
+# In[141]:
 
 
 del volume_train_1
@@ -173,7 +175,7 @@ del volume_train_2
 del volume_train_3
 
 
-# In[ ]:
+# In[142]:
 
 
 labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -182,7 +184,7 @@ mask = np.concatenate([mask_train_1, mask_train_2, mask_train_3], axis=1)
 print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[ ]:
+# In[143]:
 
 
 # Free up memory
@@ -198,7 +200,7 @@ del mask_train_3
 # 
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[ ]:
+# In[144]:
 
 
 fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -213,7 +215,7 @@ plt.show()
 # 
 # We set aside some fraction of the input to validate our model on.
 
-# In[ ]:
+# In[145]:
 
 
 fig, ax = plt.subplots()
@@ -227,7 +229,7 @@ plt.show()
 # 
 # Our training dataset will grab random patches within the masked area and outside of the validation area.
 
-# In[ ]:
+# In[146]:
 
 
 def sample_random_location(shape):
@@ -251,7 +253,7 @@ def is_proper_train_location(location):
     return not is_in_val_zone(location, val_location, val_zone_size) and is_in_mask_train(location)
 
 
-# In[ ]:
+# In[147]:
 
 
 sample_random_location_train = lambda x: sample_random_location(volume.shape[:-1])
@@ -277,7 +279,7 @@ train_locations_ds = np.stack(train_locations, axis=0)
 # 
 # Sanity check visually that our patches are where they should be.
 
-# In[ ]:
+# In[148]:
 
 
 fig, ax = plt.subplots()
@@ -297,63 +299,63 @@ ax.add_patch(val_patch)
 plt.show()
 
 
-# In[ ]:
+# In[149]:
 
 
 from scipy.stats import median_abs_deviation
 all_MAD = median_abs_deviation(volume, axis=[0, 1])
 
 
-# In[ ]:
+# In[150]:
 
 
 all_median = np.median(volume, axis=[0, 1])
 
 
-# In[ ]:
+# In[151]:
 
 
 mean = np.mean(volume)
 
 
-# In[ ]:
+# In[152]:
 
 
 mean
 
 
-# In[ ]:
+# In[153]:
 
 
 std = np.std(volume)
 
 
-# In[ ]:
+# In[154]:
 
 
 std
 
 
-# In[ ]:
+# In[155]:
 
 
-possible_max_input = ((2 ** 16 - 1) - all_median.min()) / all_MAD.min()
+possible_max_input = ((2 ** 16 - 1) / all_median.min())
 possible_max_input
 
 
-# In[ ]:
+# In[156]:
 
 
-"all_median", all_median
+print("all_median", all_median)
 
 
-# In[ ]:
+# In[157]:
 
 
-"all_MAD", all_MAD
+print("all_MAD", all_MAD)
 
 
-# In[ ]:
+# In[158]:
 
 
 printed = False
@@ -374,7 +376,7 @@ def extract_subvolume(location, volume):
     # print("mean", mean)
     # print("median", median[0, 0, :])
     
-    subvolume = (subvolume - median) / MAD
+    subvolume = (subvolume / median)
     
     if not printed:
         print("subvolume after taking care of median and MAD", subvolume)
@@ -385,7 +387,7 @@ def extract_subvolume(location, volume):
 
 # ## Create training dataset that yields random subvolumes and their labels
 
-# In[ ]:
+# In[159]:
 
 
 import torch
@@ -430,13 +432,35 @@ class SubvolumeDataset(Dataset):
             # print("subvolume in dataset (before aug)", subvolume)            
             performed = A.Compose([            
                 A.ToFloat(max_value=possible_max_input),
-                A.RandomBrightnessContrast(),
-                A.HorizontalFlip(),
-                A.VerticalFlip(),  
-            #     # A.Normalize(
-            #     #     mean=[mean],
-            #     #     std=[std],
-            #     # ),
+                A.HorizontalFlip(p=0.5), # 水平方向に反転
+                A.ShiftScaleRotate(scale_limit=0.5, rotate_limit=0, shift_limit=0.1, p=1, border_mode=0), # シフト、スケーリング、回転
+                A.PadIfNeeded(min_height=BUFFER * 2 * 0.8, min_width=BUFFER * 2 * 0.8, always_apply=True, border_mode=0), # 必要に応じてパディングを追加
+                A.RandomCrop(height=BUFFER * 2 * 0.8, width=BUFFER * 2 * 0.8, always_apply=True), # ランダムにクロップ
+                A.GaussNoise(p=0.2), # ガウスノイズを追加
+                A.Perspective(p=0.5), # パースペクティブ変換
+                A.OneOf(
+                    [
+                        A.CLAHE(p=1),
+                        A.RandomBrightness(p=1),
+                        A.RandomGamma(p=1),
+                    ],
+                    p=0.9,
+                ),
+                A.OneOf(
+                    [
+                        A.Sharpen(p=1),
+                        A.Blur(blur_limit=3, p=1),
+                        A.MotionBlur(blur_limit=3, p=1),
+                    ],
+                    p=0.9,
+                ),
+                A.OneOf(
+                    [
+                        A.RandomContrast(p=1),
+                        A.HueSaturationValue(p=1),
+                    ],
+                    p=0.9,
+                ),
                 A.FromFloat(max_value=possible_max_input),
             ])(image=subvolume, mask=label)
             subvolume = performed["image"]            
@@ -468,7 +492,7 @@ class SubvolumeDataset(Dataset):
         return subvolume, label        
 
 
-# In[ ]:
+# In[160]:
 
 
 # Convert train_locations_ds to a PyTorch tensor
@@ -478,14 +502,14 @@ train_locations_tensor = np.stack([x for x in train_locations_ds], axis=0)
 train_ds = SubvolumeDataset(train_locations_tensor, volume, labels, BUFFER, is_train=True)
 
 
-# In[ ]:
+# In[161]:
 
 
 # Create a DataLoader with the dataset
 train_dataloader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=num_workers)
 
 
-# In[ ]:
+# In[162]:
 
 
 subvolume_batch, label_batch = train_ds[1]
@@ -497,7 +521,7 @@ print(f"label_batch shape: {label_batch.shape}")
 # 
 # It's always a good idea to check that your data pipeline is efficient. You don't want to be CPU-bound at training time!
 
-# In[ ]:
+# In[163]:
 
 
 # t0 = time.time()
@@ -509,7 +533,7 @@ print(f"label_batch shape: {label_batch.shape}")
 
 # ## Create validation dataset
 
-# In[ ]:
+# In[164]:
 
 
 val_locations_stride = BUFFER
@@ -532,7 +556,7 @@ val_dataloader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_wo
 # 
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[ ]:
+# In[165]:
 
 
 fig, ax = plt.subplots()
@@ -549,7 +573,7 @@ plt.show()
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[ ]:
+# In[166]:
 
 
 def trivial_baseline(dataset):
@@ -577,7 +601,7 @@ print(f"Best validation score achievable trivially: {score * 100:.2f}% accuracy"
 # 
 # ![animation](https://user-images.githubusercontent.com/22727759/224853385-ed190d89-f466-469c-82a9-499881759d57.gif)
 
-# In[ ]:
+# In[167]:
 
 
 import torch
@@ -586,7 +610,7 @@ import torch.optim as optim
 from torchmetrics import Accuracy
 
 
-# In[ ]:
+# In[168]:
 
 
 class UNet(nn.Module):
@@ -616,13 +640,13 @@ class UNet(nn.Module):
                 nn.BatchNorm2d(64 * 2**i),
                 nn.ReLU(),
             )
-            for i in range(2, 4)
+            for i in range(2, 5)
         ])
 
 
         self.middle = nn.Sequential(
-            conv_block(512, 512),
-            conv_block(512, 512),
+            conv_block(1024, 512),
+            conv_block(512, 1024),
         )
         
         self.decoder = nn.ModuleList([
@@ -631,7 +655,7 @@ class UNet(nn.Module):
                 transpose_conv_block(2 ** (i + 6), 2 ** (i + 5)),
                 nn.Upsample(scale_factor=2, mode="nearest"),
             )
-            for i in range(3, 1, -1)
+            for i in range(4, 1, -1)
         ])
         self.final_decoder = nn.Sequential(
             nn.Conv2d(128, 32, kernel_size=3, padding=1),
@@ -662,7 +686,7 @@ class UNet(nn.Module):
         return x
 
 
-# In[ ]:
+# In[169]:
 
 
 import os
@@ -680,7 +704,7 @@ if os.path.exists(f"{DATA_DIR}/model.pt"):
 # scaler = torch.cuda.amp.GradScaler(enabled=USE_MIXED_PRECISION)
 
 # Training loop
-num_epochs = 30
+num_epochs = 50
 
 # Loss, optimizer, and metric
 criterion = nn.CrossEntropyLoss()
@@ -692,7 +716,7 @@ model = model.to(device)
 accuracy = Accuracy(task="multiclass", num_classes=2, top_k=1).to(device)
 
 
-# In[ ]:
+# In[170]:
 
 
 for epoch in tqdm(range(1, num_epochs + 1)):
@@ -712,20 +736,20 @@ for epoch in tqdm(range(1, num_epochs + 1)):
         # print("outputs", outputs)
         # print("outputs", outputs.shape, "labels", labels.shape)
         loss = criterion(outputs, labels)  
-        acc = accuracy(outputs, labels)
+        # acc = accuracy(outputs, labels)
 
         loss.backward()
         optimizer.step()    
 
         running_loss += loss.item()
-        running_accuracy += acc
+        # running_accuracy += acc
         
     # print("train output", outputs)
         
     scheduler.step()    
         
     running_loss /= len(train_dataloader)
-    running_accuracy /= len(train_dataloader)
+    # running_accuracy /= len(train_dataloader)
 
     # Validation
     model.eval()
@@ -738,15 +762,15 @@ for epoch in tqdm(range(1, num_epochs + 1)):
             subvolumes = subvolumes.float()
             outputs = model(subvolumes)
             loss = criterion(outputs, labels)
-            acc = accuracy(outputs, labels)
+            # acc = accuracy(outputs, labels)
 
             val_loss += loss.item()
-            val_accuracy += acc    
+            # val_accuracy += acc    
             
         # print("val outputs", outputs)
 
     val_loss /= len(val_dataloader)
-    val_accuracy /= len(val_dataloader)
+    # val_accuracy /= len(val_dataloader)
 
     print(f"Epoch [{epoch + 1}/{num_epochs}] Loss: {running_loss:.4f} Accuracy: {running_accuracy:.4f} Val_Loss: {val_loss:.4f} Val_Accuracy: {val_accuracy:.4f}")
 
@@ -892,18 +916,20 @@ def update_submission(predictions_map, index):
 
 
 print("Id,Predicted", file=open('submission.csv', 'w'))
-folder = pathlib.Path(DATA_DIR) / "test"
+kind = "train"
+folder = pathlib.Path(DATA_DIR) / kind
+threshold = 0.25
 for p in list(folder.iterdir()):
     index = p.stem
-    predictions_map = compute_predictions_map(split="test", index=index)
-    original_size = cv2.imread(DATA_DIR + f"/test/{index}/mask.png", 0).shape[:2]
+    predictions_map = compute_predictions_map(split=kind, index=index)
+    original_size = cv2.imread(DATA_DIR + f"/{kind}/{index}/mask.png", 0).shape[:2]
     # W, H, C → H, W, C
     predictions_map = predictions_map.transpose((1, 0, 2))    
     predictions_map = resize_ski(predictions_map, (original_size[0], original_size[1], 1)).squeeze(axis=-1)    
     print("original predictions_map size", predictions_map.shape)    
     # H, W → W, H
     update_submission(predictions_map, index)
-    plt.imshow(predictions_map, cmap="gray")
+    plt.imsave(f"{index}.png", predictions_map, cmap="gray")
 
 
 # In[ ]:
@@ -916,11 +942,4 @@ predictions_map.shape, predictions_map.shape
 
 
 predictions_map
-
-
-# In[ ]:
-
-
-plt.imshow(predictions_map, cmap="gray")
-predictions_map == 1
 
