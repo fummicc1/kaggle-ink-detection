@@ -149,7 +149,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[7]:
+# In[ ]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -165,7 +165,7 @@ volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1
 print(f"total volume: {volume.shape}")
 
 
-# In[8]:
+# In[ ]:
 
 
 del volume_train_1
@@ -173,7 +173,7 @@ del volume_train_2
 del volume_train_3
 
 
-# In[9]:
+# In[ ]:
 
 
 labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -182,7 +182,7 @@ mask = np.concatenate([mask_train_1, mask_train_2, mask_train_3], axis=1)
 print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[10]:
+# In[ ]:
 
 
 # Free up memory
@@ -198,7 +198,7 @@ del mask_train_3
 # 
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[11]:
+# In[ ]:
 
 
 fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -213,7 +213,7 @@ plt.show()
 # 
 # We set aside some fraction of the input to validate our model on.
 
-# In[12]:
+# In[ ]:
 
 
 fig, ax = plt.subplots()
@@ -227,7 +227,7 @@ plt.show()
 # 
 # Our training dataset will grab random patches within the masked area and outside of the validation area.
 
-# In[13]:
+# In[ ]:
 
 
 def sample_random_location(shape):
@@ -251,7 +251,7 @@ def is_proper_train_location(location):
     return not is_in_val_zone(location, val_location, val_zone_size) and is_in_mask_train(location)
 
 
-# In[14]:
+# In[ ]:
 
 
 sample_random_location_train = lambda x: sample_random_location(volume.shape[:-1])
@@ -261,7 +261,7 @@ is_in_mask_train = lambda x: is_in_masked_zone(x, mask)
 train_locations = []
 
 # Define the number of train locations you want to generate
-num_train_locations = 750
+num_train_locations = 20000
 
 # Generate train locations
 while len(train_locations) < num_train_locations:
@@ -277,14 +277,14 @@ train_locations_ds = np.stack(train_locations, axis=0)
 # 
 # Sanity check visually that our patches are where they should be.
 
-# In[15]:
+# In[ ]:
 
 
 fig, ax = plt.subplots()
 ax.imshow(labels)
 
 # Define the number of samples you want to take from train_locations_ds
-num_samples = 200
+num_samples = 20000
 
 # Iterate over the first 'num_samples' elements in train_locations_ds
 for i in range(num_samples):
@@ -297,63 +297,63 @@ ax.add_patch(val_patch)
 plt.show()
 
 
-# In[16]:
+# In[ ]:
 
 
 from scipy.stats import median_abs_deviation
 all_MAD = median_abs_deviation(volume, axis=[0, 1])
 
 
-# In[17]:
+# In[ ]:
 
 
 all_median = np.median(volume, axis=[0, 1])
 
 
-# In[18]:
+# In[ ]:
 
 
 mean = np.mean(volume)
 
 
-# In[19]:
+# In[ ]:
 
 
 mean
 
 
-# In[20]:
+# In[ ]:
 
 
 std = np.std(volume)
 
 
-# In[21]:
+# In[ ]:
 
 
 std
 
 
-# In[22]:
+# In[ ]:
 
 
 possible_max_input = ((2 ** 16 - 1) - all_median.min()) / all_MAD.min()
 possible_max_input
 
 
-# In[23]:
+# In[ ]:
 
 
-all_median
+"all_median", all_median
 
 
-# In[24]:
+# In[ ]:
 
 
-all_MAD
+"all_MAD", all_MAD
 
 
-# In[25]:
+# In[ ]:
 
 
 printed = False
@@ -385,7 +385,7 @@ def extract_subvolume(location, volume):
 
 # ## Create training dataset that yields random subvolumes and their labels
 
-# In[31]:
+# In[ ]:
 
 
 import torch
@@ -428,19 +428,19 @@ class SubvolumeDataset(Dataset):
             
             # print("label", label.dtype)
             # print("subvolume in dataset (before aug)", subvolume)            
-            # performed = A.Compose([            
-            #     A.ToFloat(max_value=possible_max_input),
-            #     # A.RandomBrightnessContrast(),
-            #     # A.HorizontalFlip(),
-            #     # A.VerticalFlip(),  
+            performed = A.Compose([            
+                A.ToFloat(max_value=possible_max_input),
+                A.RandomBrightnessContrast(),
+                A.HorizontalFlip(),
+                A.VerticalFlip(),  
             #     # A.Normalize(
             #     #     mean=[mean],
             #     #     std=[std],
             #     # ),
-            #     A.FromFloat(max_value=possible_max_input),
-            # ])(image=subvolume, mask=label)
-            # subvolume = performed["image"]            
-            # label = performed["mask"]
+                A.FromFloat(max_value=possible_max_input),
+            ])(image=subvolume, mask=label)
+            subvolume = performed["image"]            
+            label = performed["mask"]
             # print("subvolume in dataset (after aug)", subvolume)
             # print("label", label.dtype)
             # print("subvolume", subvolume.dtype)
@@ -450,16 +450,16 @@ class SubvolumeDataset(Dataset):
             # print(subvolume.shape, label.shape)
             # H, W, C → C, H, W
             label = torch.from_numpy(label.transpose(2, 0, 1).astype(np.uint8)) 
-        else:            
-            # performed = A.Compose([  
-            #     A.ToFloat(max_value=possible_max_input),                
-            #     # A.Normalize(
-            #     #     mean=[mean],
-            #     #     std=[std],
-            #     # ),
-            #     A.FromFloat(max_value=possible_max_input),
-            # ])(image=subvolume)
-            # subvolume = performed["image"]
+        else:
+            performed = A.Compose([  
+                A.ToFloat(max_value=possible_max_input),                
+                # A.Normalize(
+                #     mean=[mean],
+                #     std=[std],
+                # ),
+                A.FromFloat(max_value=possible_max_input),
+            ])(image=subvolume)
+            subvolume = performed["image"]
             subvolume = torch.from_numpy(subvolume.transpose(2, 0, 1).astype(np.float64))
             if label is not None:
                 label = torch.from_numpy(label.transpose(2, 0, 1).astype(np.uint8)) 
@@ -468,7 +468,7 @@ class SubvolumeDataset(Dataset):
         return subvolume, label        
 
 
-# In[32]:
+# In[ ]:
 
 
 # Convert train_locations_ds to a PyTorch tensor
@@ -478,14 +478,14 @@ train_locations_tensor = np.stack([x for x in train_locations_ds], axis=0)
 train_ds = SubvolumeDataset(train_locations_tensor, volume, labels, BUFFER, is_train=True)
 
 
-# In[33]:
+# In[ ]:
 
 
 # Create a DataLoader with the dataset
 train_dataloader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=num_workers)
 
 
-# In[34]:
+# In[ ]:
 
 
 subvolume_batch, label_batch = train_ds[1]
@@ -497,7 +497,7 @@ print(f"label_batch shape: {label_batch.shape}")
 # 
 # It's always a good idea to check that your data pipeline is efficient. You don't want to be CPU-bound at training time!
 
-# In[35]:
+# In[ ]:
 
 
 # t0 = time.time()
@@ -509,7 +509,7 @@ print(f"label_batch shape: {label_batch.shape}")
 
 # ## Create validation dataset
 
-# In[36]:
+# In[ ]:
 
 
 val_locations_stride = BUFFER
@@ -532,7 +532,7 @@ val_dataloader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_wo
 # 
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[37]:
+# In[ ]:
 
 
 fig, ax = plt.subplots()
@@ -549,7 +549,7 @@ plt.show()
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[38]:
+# In[ ]:
 
 
 def trivial_baseline(dataset):
@@ -577,7 +577,7 @@ print(f"Best validation score achievable trivially: {score * 100:.2f}% accuracy"
 # 
 # ![animation](https://user-images.githubusercontent.com/22727759/224853385-ed190d89-f466-469c-82a9-499881759d57.gif)
 
-# In[39]:
+# In[ ]:
 
 
 import torch
@@ -586,7 +586,7 @@ import torch.optim as optim
 from torchmetrics import Accuracy
 
 
-# In[40]:
+# In[ ]:
 
 
 class UNet(nn.Module):
@@ -662,7 +662,7 @@ class UNet(nn.Module):
         return x
 
 
-# In[41]:
+# In[ ]:
 
 
 import os
@@ -692,10 +692,10 @@ model = model.to(device)
 accuracy = Accuracy(task="multiclass", num_classes=2, top_k=1).to(device)
 
 
-# In[42]:
+# In[ ]:
 
 
-for epoch in tqdm(range(num_epochs)):
+for epoch in tqdm(range(1, num_epochs + 1)):
     model.train()
     running_loss = 0.0
     running_accuracy = 0.0
@@ -704,7 +704,6 @@ for epoch in tqdm(range(num_epochs)):
         subvolumes, labels = subvolumes.to(device), labels.to(device)        
         labels = labels.long().squeeze(dim=1)
         subvolumes = subvolumes.float() 
-        
         # print("torch.unique(subvolumes)", torch.unique(subvolumes), file=open("subvolumes_unique", "w"))
 
         optimizer.zero_grad()
@@ -875,8 +874,6 @@ def rle(predictions_map, threshold):
     ends = np.where((flat_img[:-1] == 1) & (flat_img[1:] == 0))[0]
 
     lengths = ends - starts
-    
-    print(lengths.shape)
 
     return " ".join(map(str, np.c_[starts, lengths].flatten()))
 
@@ -905,8 +902,8 @@ for p in list(folder.iterdir()):
     predictions_map = resize_ski(predictions_map, (original_size[0], original_size[1], 1)).squeeze(axis=-1)    
     print("original predictions_map size", predictions_map.shape)    
     # H, W → W, H
-    update_submission(predictions_map.transpose((1, 0)), index)
-    break
+    update_submission(predictions_map, index)
+    plt.imshow(predictions_map, cmap="gray")
 
 
 # In[ ]:
