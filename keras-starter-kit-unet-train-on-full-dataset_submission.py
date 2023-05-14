@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[44]:
+# In[67]:
 
 
 import numpy as np
@@ -29,8 +29,8 @@ import cv2
 # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
 DATA_DIR = "."
 BUFFER = 64  # Half-size of papyrus patches we'll use as model inputs
-Z_DIM = 32  # Number of slices in the z direction. Max value is 64 - Z_START
-Z_START = 16  # Offset of slices in the z direction
+Z_LIST = list(range(0, 65, 4))  # Offset of slices in the z direction
+Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
 SHARED_HEIGHT = 4000  # Height to resize all papyrii
 
 # (y, x)
@@ -43,30 +43,49 @@ USE_MIXED_PRECISION = False
 USE_JIT_COMPILE = False
 
 device = torch.device("cuda")
-threshold = 0.2
+threshold = 0.25
 num_workers = 2
 exp = 1e-7
 
 
-# In[45]:
+# In[68]:
 
 
-all_median = [19944., 20054., 20186., 20350., 20561., 20833., 21149., 21521.,
-       21908., 22264., 22528., 22622., 22458., 21933., 21038., 19960.,
-       18980., 18247., 17806., 17675., 17848., 18266., 18841., 19475.,
-       20094., 20650., 21128., 21526., 21848., 22109., 22319., 22489.]
+from scipy.stats import median_abs_deviation
+
+def calculate_MAD(volume):
+    all_MAD = median_abs_deviation(volume, axis=[0, 1])
+    return all_MAD
+    
+def calculate_median(volume):
+    all_median = np.median(volume, axis=[0, 1])
+    return all_median
 
 
-# In[46]:
+# In[69]:
 
 
-all_MAD = [12953., 12971., 13006., 13052., 13099., 13152., 13246., 13371.,
-       13550., 13778., 14048., 14332., 14592., 14804., 14870., 14558.,
-       13639., 12094., 10135.,  8519.,  7500.,  6682.,  5969.,  5350.,
-        4828.,  4399.,  4056.,  3787.,  3576.,  3408.,  3272.,  3160.]
+all_median = np.array([19581., 19618., 19645., 19710., 19944., 20561., 21908., 22458.,
+        18980., 17848., 20094., 21848., 22629., 22993., 23171., 23261.,
+        23305.])
 
 
-# In[47]:
+# In[70]:
+
+
+all_MAD = np.array([12424., 12561., 12718., 12864., 12953., 13099., 13550., 14592.,
+        13639.,  7500.,  4828.,  3576.,  3067.,  2808.,  2666.,  2588.,
+         2550.])
+
+
+# In[71]:
+
+
+possible_max_input = ((2 ** 16 - 1) / all_median.min())
+possible_max_input
+
+
+# In[72]:
 
 
 def resize(img):
@@ -90,12 +109,14 @@ def load_labels(split, index):
     return img
 
 
-# In[48]:
+# In[73]:
 
 
 def load_volume(split, index):
     # Load the 3d x-ray scan, one slice at a time
-    z_slices_fnames = sorted(glob.glob(f"{DATA_DIR}/{split}/{index}/surface_volume/*.tif"))[Z_START:Z_START + Z_DIM]
+    all = sorted(glob.glob(f"{DATA_DIR}/{split}/{index}/surface_volume/*.tif"))
+    z_slices_fnames = [all[i] for i in range(len(all)) if i in Z_LIST]
+    assert len(z_slices_fnames) == Z_DIM
     z_slices = []
     for z, filename in  tqdm(enumerate(z_slices_fnames)):
         img = cv2.imread(filename, -1)
@@ -104,7 +125,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[49]:
+# In[74]:
 
 
 def sample_random_location(shape):
@@ -125,7 +146,7 @@ def is_in_val_zone(location, val_location, val_zone_size):
     return x_match and y_match
 
 
-# In[50]:
+# In[75]:
 
 
 printed = False
@@ -155,7 +176,7 @@ def extract_subvolume(location, volume):
     return subvolume
 
 
-# In[51]:
+# In[76]:
 
 
 import torch
@@ -198,19 +219,19 @@ class SubvolumeDataset(Dataset):
             
             # print("label", label.dtype)
             # print("subvolume in dataset (before aug)", subvolume)            
-            # performed = A.Compose([            
-            #     A.ToFloat(max_value=possible_max_input),
-            #     # A.RandomBrightnessContrast(),
-            #     # A.HorizontalFlip(),
-            #     # A.VerticalFlip(),  
+            performed = A.Compose([            
+                A.ToFloat(max_value=possible_max_input),
+                A.RandomBrightnessContrast(),
+                A.HorizontalFlip(),
+                A.VerticalFlip(),  
             #     # A.Normalize(
             #     #     mean=[mean],
             #     #     std=[std],
             #     # ),
-            #     A.FromFloat(max_value=possible_max_input),
-            # ])(image=subvolume, mask=label)
-            # subvolume = performed["image"]            
-            # label = performed["mask"]
+                A.FromFloat(max_value=possible_max_input),
+            ])(image=subvolume, mask=label)
+            subvolume = performed["image"]            
+            label = performed["mask"]
             # print("subvolume in dataset (after aug)", subvolume)
             # print("label", label.dtype)
             # print("subvolume", subvolume.dtype)
@@ -220,16 +241,16 @@ class SubvolumeDataset(Dataset):
             # print(subvolume.shape, label.shape)
             # H, W, C → C, H, W
             label = torch.from_numpy(label.transpose(2, 0, 1).astype(np.uint8)) 
-        else:            
-            # performed = A.Compose([  
-            #     A.ToFloat(max_value=possible_max_input),                
-            #     # A.Normalize(
-            #     #     mean=[mean],
-            #     #     std=[std],
-            #     # ),
-            #     A.FromFloat(max_value=possible_max_input),
-            # ])(image=subvolume)
-            # subvolume = performed["image"]
+        else:
+            performed = A.Compose([  
+                A.ToFloat(max_value=possible_max_input),                
+                # A.Normalize(
+                #     mean=[mean],
+                #     std=[std],
+                # ),
+                A.FromFloat(max_value=possible_max_input),
+            ])(image=subvolume)
+            subvolume = performed["image"]
             subvolume = torch.from_numpy(subvolume.transpose(2, 0, 1).astype(np.float64))
             if label is not None:
                 label = torch.from_numpy(label.transpose(2, 0, 1).astype(np.uint8)) 
@@ -238,7 +259,7 @@ class SubvolumeDataset(Dataset):
         return subvolume, label        
 
 
-# In[52]:
+# In[77]:
 
 
 class UNet(nn.Module):
@@ -268,13 +289,13 @@ class UNet(nn.Module):
                 nn.BatchNorm2d(64 * 2**i),
                 nn.ReLU(),
             )
-            for i in range(2, 4)
+            for i in range(2, 5)
         ])
 
 
         self.middle = nn.Sequential(
-            conv_block(512, 512),
-            conv_block(512, 512),
+            conv_block(1024, 512),
+            conv_block(512, 1024),
         )
         
         self.decoder = nn.ModuleList([
@@ -283,7 +304,7 @@ class UNet(nn.Module):
                 transpose_conv_block(2 ** (i + 6), 2 ** (i + 5)),
                 nn.Upsample(scale_factor=2, mode="nearest"),
             )
-            for i in range(3, 1, -1)
+            for i in range(4, 1, -1)
         ])
         self.final_decoder = nn.Sequential(
             nn.Conv2d(128, 32, kernel_size=3, padding=1),
@@ -314,13 +335,13 @@ class UNet(nn.Module):
         return x
 
 
-# In[53]:
+# In[78]:
 
 
 device = torch.device("cuda")
 
 
-# In[54]:
+# In[79]:
 
 
 model = UNet(Z_DIM, 2)
@@ -332,7 +353,7 @@ model = model.to(device)
 
 # ## Load up the training data
 
-# In[55]:
+# In[80]:
 
 
 import torch
@@ -341,11 +362,15 @@ import numpy as np
 from tqdm import tqdm
 
 def compute_predictions_map(split, index):
+    global all_MAD, all_median
     
     print(f"Load data for {split}/{index}")
 
-    test_volume = load_volume(split=split, index=index)
+    test_volume = load_volume(split=split, index=index)        
     test_mask = load_mask(split=split, index=index)    
+    
+    # all_MAD = calculate_MAD(test_volume)
+    # all_median = calculate_median(test_volume)
 
     test_locations = []
     stride = BUFFER // 2
@@ -378,8 +403,9 @@ def compute_predictions_map(split, index):
             patch_batch = patch_batch.to(device).float()
             predictions = model(patch_batch)
             # print("predictions", predictions)
-            predictions = nn.Softmax(dim=1)(predictions)
+            predictions = nn.Softmax(dim=1)(predictions)            
             predictions: torch.Tensor = predictions[:, 1, :, :].unsqueeze(dim=1)
+            # print("predictions", predictions)
             # print("Softmaxed predictions where conf is gt threshold", predictions[predictions.gt(threshold)])
             # →(BATCH, W, H, C)
             predictions = torch.permute(predictions, (0, 3, 2, 1))
@@ -393,14 +419,14 @@ def compute_predictions_map(split, index):
     return predictions_map
 
 
-# In[56]:
+# In[81]:
 
 
 from skimage.transform import resize as resize_ski
 import pathlib
 
 
-# In[57]:
+# In[82]:
 
 
 def rle(predictions_map, threshold):
@@ -419,7 +445,7 @@ def rle(predictions_map, threshold):
     return " ".join(map(str, np.c_[starts, lengths].flatten()))
 
 
-# In[58]:
+# In[83]:
 
 
 def update_submission(predictions_map, index):
@@ -427,19 +453,22 @@ def update_submission(predictions_map, index):
     print(f"{index}," + rle_, file=open('submission.csv', 'a'))
 
 
-# In[59]:
+# In[84]:
 
 
 print("Id,Predicted", file=open('submission.csv', 'w'))
-folder = pathlib.Path(DATA_DIR) / "train"
+kind = "test"
+folder = pathlib.Path(DATA_DIR) / kind
+threshold = 0.25
 for p in list(folder.iterdir()):
     index = p.stem
-    predictions_map = compute_predictions_map(split="train", index=index)
-    original_size = cv2.imread(DATA_DIR + f"/train/{index}/mask.png", 0).shape[:2]
+    predictions_map = compute_predictions_map(split=kind, index=index)
+    original_size = cv2.imread(DATA_DIR + f"/{kind}/{index}/mask.png", 0).shape[:2]
     # W, H, C → H, W, C
     predictions_map = predictions_map.transpose((1, 0, 2))    
     predictions_map = resize_ski(predictions_map, (original_size[0], original_size[1], 1)).squeeze(axis=-1)    
     print("original predictions_map size", predictions_map.shape)    
     # H, W → W, H
     update_submission(predictions_map, index)
+    plt.imsave(f"{index}.png", predictions_map, cmap="gray")
 

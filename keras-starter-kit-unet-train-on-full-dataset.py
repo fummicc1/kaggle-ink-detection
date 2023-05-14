@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[134]:
+# In[45]:
 
 
 import numpy as np
@@ -47,7 +47,7 @@ num_workers = 2
 exp = 1e-7
 
 
-# In[135]:
+# In[46]:
 
 
 plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
@@ -55,7 +55,7 @@ plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
 
 # ## Load up the training data
 
-# In[136]:
+# In[47]:
 
 
 def resize(img):
@@ -90,7 +90,7 @@ ax2.imshow(labels, cmap='gray')
 plt.show()
 
 
-# In[137]:
+# In[48]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -118,7 +118,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[138]:
+# In[49]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -135,7 +135,7 @@ ax3.imshow(labels_train_3, cmap='gray')
 plt.show()
 
 
-# In[139]:
+# In[50]:
 
 
 def load_volume(split, index):
@@ -151,7 +151,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[140]:
+# In[51]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -167,7 +167,7 @@ volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1
 print(f"total volume: {volume.shape}")
 
 
-# In[141]:
+# In[52]:
 
 
 del volume_train_1
@@ -175,7 +175,7 @@ del volume_train_2
 del volume_train_3
 
 
-# In[142]:
+# In[53]:
 
 
 labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -184,7 +184,7 @@ mask = np.concatenate([mask_train_1, mask_train_2, mask_train_3], axis=1)
 print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[143]:
+# In[54]:
 
 
 # Free up memory
@@ -200,7 +200,7 @@ del mask_train_3
 # 
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[144]:
+# In[55]:
 
 
 fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -215,7 +215,7 @@ plt.show()
 # 
 # We set aside some fraction of the input to validate our model on.
 
-# In[145]:
+# In[56]:
 
 
 fig, ax = plt.subplots()
@@ -229,7 +229,7 @@ plt.show()
 # 
 # Our training dataset will grab random patches within the masked area and outside of the validation area.
 
-# In[146]:
+# In[57]:
 
 
 def sample_random_location(shape):
@@ -253,7 +253,7 @@ def is_proper_train_location(location):
     return not is_in_val_zone(location, val_location, val_zone_size) and is_in_mask_train(location)
 
 
-# In[147]:
+# In[58]:
 
 
 sample_random_location_train = lambda x: sample_random_location(volume.shape[:-1])
@@ -279,7 +279,7 @@ train_locations_ds = np.stack(train_locations, axis=0)
 # 
 # Sanity check visually that our patches are where they should be.
 
-# In[148]:
+# In[59]:
 
 
 fig, ax = plt.subplots()
@@ -299,63 +299,63 @@ ax.add_patch(val_patch)
 plt.show()
 
 
-# In[149]:
+# In[60]:
 
 
 from scipy.stats import median_abs_deviation
 all_MAD = median_abs_deviation(volume, axis=[0, 1])
 
 
-# In[150]:
+# In[61]:
 
 
 all_median = np.median(volume, axis=[0, 1])
 
 
-# In[151]:
+# In[62]:
 
 
 mean = np.mean(volume)
 
 
-# In[152]:
+# In[63]:
 
 
 mean
 
 
-# In[153]:
+# In[64]:
 
 
 std = np.std(volume)
 
 
-# In[154]:
+# In[65]:
 
 
 std
 
 
-# In[155]:
+# In[66]:
 
 
 possible_max_input = ((2 ** 16 - 1) / all_median.min())
 possible_max_input
 
 
-# In[156]:
+# In[67]:
 
 
 print("all_median", all_median)
 
 
-# In[157]:
+# In[68]:
 
 
 print("all_MAD", all_MAD)
 
 
-# In[158]:
+# In[69]:
 
 
 printed = False
@@ -387,7 +387,7 @@ def extract_subvolume(location, volume):
 
 # ## Create training dataset that yields random subvolumes and their labels
 
-# In[159]:
+# In[70]:
 
 
 import torch
@@ -434,18 +434,8 @@ class SubvolumeDataset(Dataset):
                 A.ToFloat(max_value=possible_max_input),
                 A.HorizontalFlip(p=0.5), # 水平方向に反転
                 A.ShiftScaleRotate(scale_limit=0.5, rotate_limit=0, shift_limit=0.1, p=1, border_mode=0), # シフト、スケーリング、回転
-                A.PadIfNeeded(min_height=BUFFER * 2 * 0.8, min_width=BUFFER * 2 * 0.8, always_apply=True, border_mode=0), # 必要に応じてパディングを追加
-                A.RandomCrop(height=BUFFER * 2 * 0.8, width=BUFFER * 2 * 0.8, always_apply=True), # ランダムにクロップ
                 A.GaussNoise(p=0.2), # ガウスノイズを追加
-                A.Perspective(p=0.5), # パースペクティブ変換
-                A.OneOf(
-                    [
-                        A.CLAHE(p=1),
-                        A.RandomBrightness(p=1),
-                        A.RandomGamma(p=1),
-                    ],
-                    p=0.9,
-                ),
+                A.Perspective(p=0.5), # パースペクティブ変換                   
                 A.OneOf(
                     [
                         A.Sharpen(p=1),
@@ -454,13 +444,8 @@ class SubvolumeDataset(Dataset):
                     ],
                     p=0.9,
                 ),
-                A.OneOf(
-                    [
-                        A.RandomContrast(p=1),
-                        A.HueSaturationValue(p=1),
-                    ],
-                    p=0.9,
-                ),
+                A.PadIfNeeded(min_height=BUFFER * 2, min_width=BUFFER * 2, always_apply=True, border_mode=0), # 必要に応じてパディングを追加
+                A.RandomCrop(height=BUFFER * 2, width=BUFFER * 2, always_apply=True), # ランダムにクロップ, Moduleの中で計算する際に次元がバッチ内で揃っている必要があるので最後にサイズは揃える
                 A.FromFloat(max_value=possible_max_input),
             ])(image=subvolume, mask=label)
             subvolume = performed["image"]            
@@ -492,7 +477,7 @@ class SubvolumeDataset(Dataset):
         return subvolume, label        
 
 
-# In[160]:
+# In[71]:
 
 
 # Convert train_locations_ds to a PyTorch tensor
@@ -502,14 +487,14 @@ train_locations_tensor = np.stack([x for x in train_locations_ds], axis=0)
 train_ds = SubvolumeDataset(train_locations_tensor, volume, labels, BUFFER, is_train=True)
 
 
-# In[161]:
+# In[72]:
 
 
 # Create a DataLoader with the dataset
 train_dataloader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=num_workers)
 
 
-# In[162]:
+# In[73]:
 
 
 subvolume_batch, label_batch = train_ds[1]
@@ -521,7 +506,7 @@ print(f"label_batch shape: {label_batch.shape}")
 # 
 # It's always a good idea to check that your data pipeline is efficient. You don't want to be CPU-bound at training time!
 
-# In[163]:
+# In[74]:
 
 
 # t0 = time.time()
@@ -533,7 +518,7 @@ print(f"label_batch shape: {label_batch.shape}")
 
 # ## Create validation dataset
 
-# In[164]:
+# In[75]:
 
 
 val_locations_stride = BUFFER
@@ -556,7 +541,7 @@ val_dataloader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_wo
 # 
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[165]:
+# In[76]:
 
 
 fig, ax = plt.subplots()
@@ -573,7 +558,7 @@ plt.show()
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[166]:
+# In[77]:
 
 
 def trivial_baseline(dataset):
@@ -601,7 +586,7 @@ print(f"Best validation score achievable trivially: {score * 100:.2f}% accuracy"
 # 
 # ![animation](https://user-images.githubusercontent.com/22727759/224853385-ed190d89-f466-469c-82a9-499881759d57.gif)
 
-# In[167]:
+# In[78]:
 
 
 import torch
@@ -610,7 +595,7 @@ import torch.optim as optim
 from torchmetrics import Accuracy
 
 
-# In[168]:
+# In[86]:
 
 
 class UNet(nn.Module):
@@ -661,7 +646,7 @@ class UNet(nn.Module):
             nn.Conv2d(128, 32, kernel_size=3, padding=1),
             nn.Conv2d(32, out_channels, kernel_size=3, padding=1),
         )
-        self.activation = nn.Identity()
+        self.activation = nn.Sigmoid()
 
     def forward(self, x):
         # print("input:", x)
@@ -686,14 +671,14 @@ class UNet(nn.Module):
         return x
 
 
-# In[169]:
+# In[89]:
 
 
 import os
 import torch.optim.lr_scheduler
 
 # Define the model
-model = UNet(Z_DIM, 2)
+model = UNet(Z_DIM, 1)
 model = nn.DataParallel(model)
 
 if os.path.exists(f"{DATA_DIR}/model.pt"):
@@ -707,7 +692,7 @@ if os.path.exists(f"{DATA_DIR}/model.pt"):
 num_epochs = 50
 
 # Loss, optimizer, and metric
-criterion = nn.CrossEntropyLoss()
+criterion = nn.BCELoss()
 optimizer = optim.Adam(model.parameters())
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
 
@@ -716,7 +701,7 @@ model = model.to(device)
 accuracy = Accuracy(task="multiclass", num_classes=2, top_k=1).to(device)
 
 
-# In[170]:
+# In[ ]:
 
 
 for epoch in tqdm(range(1, num_epochs + 1)):
@@ -726,13 +711,13 @@ for epoch in tqdm(range(1, num_epochs + 1)):
 
     for idx, (subvolumes, labels) in tqdm(enumerate(train_dataloader)):
         subvolumes, labels = subvolumes.to(device), labels.to(device)        
-        labels = labels.long().squeeze(dim=1)
+        labels = labels.float().squeeze(dim=1)
         subvolumes = subvolumes.float() 
         # print("torch.unique(subvolumes)", torch.unique(subvolumes), file=open("subvolumes_unique", "w"))
 
         optimizer.zero_grad()
 
-        outputs = model(subvolumes)
+        outputs = model(subvolumes).squeeze(dim=1)
         # print("outputs", outputs)
         # print("outputs", outputs.shape, "labels", labels.shape)
         loss = criterion(outputs, labels)  
@@ -758,9 +743,9 @@ for epoch in tqdm(range(1, num_epochs + 1)):
     with torch.no_grad():
         for subvolumes, labels in tqdm(val_dataloader):
             subvolumes, labels = subvolumes.to(device), labels.to(device)
-            labels = labels.long().squeeze(dim=1)
+            labels = labels.float().squeeze(dim=1)
             subvolumes = subvolumes.float()
-            outputs = model(subvolumes)
+            outputs = model(subvolumes).squeeze(dim=1)
             loss = criterion(outputs, labels)
             # acc = accuracy(outputs, labels)
 
@@ -802,7 +787,7 @@ gc.collect()
 # In[ ]:
 
 
-model = UNet(Z_DIM, 2)
+model = UNet(Z_DIM, 1)
 model = nn.DataParallel(model)
 model.load_state_dict(torch.load("model.pt"))
 model = model.to(device)
@@ -863,8 +848,8 @@ def compute_predictions_map(split, index):
             patch_batch = patch_batch.to(device).float()
             predictions = model(patch_batch)
             # print("predictions", predictions)
-            predictions = nn.Softmax(dim=1)(predictions)
-            predictions: torch.Tensor = predictions[:, 1, :, :].unsqueeze(dim=1)
+            predictions = predictions.unsqueeze(dim=1)
+            print("predictions", predictions[:, :, 0, 0])
             # print("Softmaxed predictions where conf is gt threshold", predictions[predictions.gt(threshold)])
             # →(BATCH, W, H, C)
             predictions = torch.permute(predictions, (0, 3, 2, 1))
