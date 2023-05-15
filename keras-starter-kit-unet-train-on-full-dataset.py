@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[ ]:
+# In[1]:
 
 
 import numpy as np
@@ -57,7 +57,7 @@ pytorch_lightning.seed_everything(seed=42)
 torch.set_float32_matmul_precision('high')
 
 
-# In[ ]:
+# In[2]:
 
 
 plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
@@ -65,7 +65,7 @@ plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
 
 # ## Load up the training data
 
-# In[ ]:
+# In[3]:
 
 
 def resize(img):
@@ -100,7 +100,7 @@ ax2.imshow(labels, cmap='gray')
 plt.show()
 
 
-# In[ ]:
+# In[4]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -128,7 +128,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[ ]:
+# In[5]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -145,7 +145,7 @@ ax3.imshow(labels_train_3, cmap='gray')
 plt.show()
 
 
-# In[ ]:
+# In[6]:
 
 
 def load_volume(split, index):
@@ -162,7 +162,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[ ]:
+# In[7]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -178,7 +178,7 @@ volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1
 print(f"total volume: {volume.shape}")
 
 
-# In[ ]:
+# In[8]:
 
 
 del volume_train_1
@@ -186,7 +186,7 @@ del volume_train_2
 del volume_train_3
 
 
-# In[ ]:
+# In[9]:
 
 
 labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -195,7 +195,7 @@ mask = np.concatenate([mask_train_1, mask_train_2, mask_train_3], axis=1)
 print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[ ]:
+# In[10]:
 
 
 # Free up memory
@@ -211,7 +211,7 @@ del mask_train_3
 # 
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[ ]:
+# In[11]:
 
 
 fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -225,26 +225,26 @@ plt.show()
 # ## Create a dataset in the input volume
 # 
 
-# In[ ]:
+# In[12]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[ ]:
+# In[13]:
 
 
 volume.shape
 
 
-# In[ ]:
+# In[14]:
 
 
 mask.shape
 
 
-# In[ ]:
+# In[15]:
 
 
 is_in_mask_train = lambda x: is_in_masked_zone(x, mask)
@@ -264,7 +264,7 @@ for y in range(BUFFER, volume_height - BUFFER, BUFFER // 2):
 locations_ds = np.stack(locations, axis=0)
 
 
-# In[ ]:
+# In[16]:
 
 
 locations_ds.shape
@@ -274,7 +274,7 @@ locations_ds.shape
 # 
 # Sanity check visually that our patches are where they should be.
 
-# In[ ]:
+# In[17]:
 
 
 fig, ax = plt.subplots()
@@ -291,38 +291,38 @@ for y, x in locations_ds:
 plt.show()
 
 
-# In[ ]:
+# In[18]:
 
 
 from scipy.stats import median_abs_deviation
 all_MAD = median_abs_deviation(volume, axis=[0, 1])
 
 
-# In[ ]:
+# In[19]:
 
 
 all_median = np.median(volume, axis=[0, 1])
 
 
-# In[ ]:
+# In[20]:
 
 
 mean = np.mean(volume)
 
 
-# In[ ]:
+# In[21]:
 
 
 mean
 
 
-# In[ ]:
+# In[22]:
 
 
 std = np.std(volume)
 
 
-# In[ ]:
+# In[23]:
 
 
 std
@@ -370,7 +370,7 @@ def extract_subvolume(location, volume):
     # print("mean", mean)
     # print("median", median[0, 0, :])
     
-    subvolume = (subvolume / median)
+    subvolume = (subvolume - median) / MAD
     
     if not printed:
         print("subvolume after taking care of median and MAD", subvolume)
