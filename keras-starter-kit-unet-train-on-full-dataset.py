@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[ ]:
+# In[1]:
 
 
 import numpy as np
@@ -17,6 +17,9 @@ from albumentations.pytorch import ToTensorV2
 import pytorch_lightning
 import segmentation_models_pytorch as smp
 import pytorch_lightning as pl
+
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
 
 import glob
 import time
@@ -37,13 +40,13 @@ import torch.utils.data
 # Data config
 # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
 DATA_DIR = '/home/fummicc1/codes/competitions/kaggle-ink-detection'
-BUFFER = 160  # Half-size of papyrus patches we'll use as model inputs
-Z_LIST = list(range(0, 65, 3))  # Offset of slices in the z direction
+BUFFER = 128  # Half-size of papyrus patches we'll use as model inputs
+Z_LIST = list(range(0, 65, 4))  # Offset of slices in the z direction
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
-MAX_LENGTH = 4800  # Max length(width or height) to resize all papyrii
+SHARED_LENGTH = 4000  # Max length(width or height) to resize all papyrii
 
 # Model config
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 
 device = torch.device("cuda")
 threshold = 0.5
@@ -57,7 +60,7 @@ pytorch_lightning.seed_everything(seed=42)
 torch.set_float32_matmul_precision('high')
 
 
-# In[ ]:
+# In[2]:
 
 
 # plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
@@ -69,18 +72,19 @@ plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
 
 # ## Load up the training data
 
-# In[ ]:
+# In[3]:
 
 
 def resize(img):
     current_height, current_width = img.shape    
     aspect_ratio = current_width / current_height
-    if current_width > current_height:
-        new_height = int(MAX_LENGTH / aspect_ratio)
-        new_width = MAX_LENGTH
+    if current_height > current_width:
+        new_height = SHARED_LENGTH
+        new_width = int(SHARED_LENGTH * aspect_ratio)
     else:
-        new_height = MAX_LENGTH
-        new_width = int(MAX_LENGTH * aspect_ratio)
+        new_width = SHARED_LENGTH
+        new_height = int(SHARED_LENGTH / aspect_ratio)        
+        
     new_size = (new_width, new_height)
     # (W, H)の順で渡すが結果は(H, W)になっている
     img = cv2.resize(img, new_size)
@@ -109,7 +113,7 @@ ax2.imshow(labels, cmap='gray')
 plt.show()
 
 
-# In[ ]:
+# In[4]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -137,7 +141,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[ ]:
+# In[5]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -154,7 +158,7 @@ plt.tight_layout()
 plt.show()
 
 
-# In[ ]:
+# In[6]:
 
 
 def load_volume(split, index):
@@ -171,7 +175,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[ ]:
+# In[7]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -187,7 +191,7 @@ volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1
 print(f"total volume: {volume.shape}")
 
 
-# In[ ]:
+# In[8]:
 
 
 del volume_train_1
@@ -195,7 +199,7 @@ del volume_train_2
 del volume_train_3
 
 
-# In[ ]:
+# In[9]:
 
 
 labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -204,7 +208,7 @@ mask = np.concatenate([mask_train_1, mask_train_2, mask_train_3], axis=1)
 print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[ ]:
+# In[10]:
 
 
 # Free up memory
@@ -220,7 +224,7 @@ del mask_train_3
 # 
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[ ]:
+# In[11]:
 
 
 fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -234,26 +238,26 @@ plt.show()
 # ## Create a dataset in the input volume
 # 
 
-# In[ ]:
+# In[12]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[ ]:
+# In[13]:
 
 
 volume.shape
 
 
-# In[ ]:
+# In[14]:
 
 
 mask.shape
 
 
-# In[ ]:
+# In[15]:
 
 
 is_in_mask_train = lambda x: is_in_masked_zone(x, mask)
@@ -264,8 +268,8 @@ locations = []
 # Generate train locations
 volume_height,volume_width = volume.shape[:-1]
 
-for y in range(BUFFER, volume_height - BUFFER, BUFFER // 2):
-    for x in range(BUFFER, volume_width - BUFFER, BUFFER // 2):
+for y in range(BUFFER, volume_height - BUFFER, BUFFER // 3):
+    for x in range(BUFFER, volume_width - BUFFER, BUFFER // 3):
         if is_in_mask_train((y, x)):
             locations.append((y, x))
 
@@ -273,7 +277,7 @@ for y in range(BUFFER, volume_height - BUFFER, BUFFER // 2):
 locations_ds = np.stack(locations, axis=0)
 
 
-# In[ ]:
+# In[16]:
 
 
 locations_ds.shape
@@ -283,16 +287,12 @@ locations_ds.shape
 # 
 # Sanity check visually that our patches are where they should be.
 
-# In[ ]:
+# In[17]:
 
 
 fig, ax = plt.subplots()
 ax.imshow(labels)
 
-# Define the number of samples you want to take from train_locations_ds
-num_samples = 4000
-
-# Iterate over the first 'num_samples' elements in train_locations_ds
 for y, x in locations_ds:
     patch = Rectangle([x - BUFFER, y - BUFFER], 2 * BUFFER, 2 * BUFFER, linewidth=2, edgecolor='r', facecolor='none')
     ax.add_patch(patch)
@@ -300,65 +300,72 @@ for y, x in locations_ds:
 plt.show()
 
 
-# In[ ]:
+# In[18]:
 
 
 from scipy.stats import median_abs_deviation
 all_MAD = median_abs_deviation(volume, axis=[0, 1])
 
 
-# In[ ]:
+# In[19]:
 
 
 all_median = np.median(volume, axis=[0, 1])
 
 
-# In[ ]:
+# In[20]:
 
 
 mean = np.mean(volume)
 
 
-# In[ ]:
+# In[21]:
 
 
 mean
 
 
-# In[ ]:
+# In[22]:
 
 
 std = np.std(volume)
 
 
-# In[ ]:
+# In[23]:
 
 
 std
 
 
-# In[ ]:
+# In[24]:
 
 
-possible_max_input = ((2 ** 16 - 1) / all_median.min())
+possible_max_input = ((2 ** 8 - 1) - all_median.min()) / all_MAD.min()
 possible_max_input
 
 
-# In[ ]:
+# In[25]:
+
+
+possible_min_input = ((0) - all_median.min()) / all_MAD.min()
+possible_min_input
+
+
+# In[26]:
 
 
 print("all_median", all_median)
 "all_median", all_median
 
 
-# In[ ]:
+# In[27]:
 
 
 print("all_MAD", all_MAD)
 "all_MAD", all_MAD
 
 
-# In[ ]:
+# In[28]:
 
 
 printed = True
@@ -390,7 +397,7 @@ def extract_subvolume(location, volume):
 
 # ## SubvolumeDataset
 
-# In[ ]:
+# In[29]:
 
 
 import torch
@@ -414,7 +421,7 @@ class SubvolumeDataset(Dataset):
         location = np.array(self.locations[idx])
         y, x = location[0], location[1]
 
-        subvolume = extract_subvolume(location, self.volume)        
+        subvolume = extract_subvolume(location, self.volume) + possible_min_input  
         # print("subvolume", subvolume)
         # print("labels", labels)
         # subvolume = subvolume.numpy()
@@ -434,10 +441,11 @@ class SubvolumeDataset(Dataset):
             # print("label", label.dtype)
             # print("subvolume in dataset (before aug)", subvolume)    
             size = int(BUFFER * 2)
-            performed = A.Compose([            
-                # A.ToFloat(max_value=possible_max_input),
+            performed = A.Compose([
+                A.ToFloat(max_value=possible_max_input - possible_min_input),                
                 A.HorizontalFlip(p=0.5), # 水平方向に反転
                 A.VerticalFlip(p=0.5), # 水平方向に反転
+                A.RandomBrightnessContrast(p=0.4),
                 A.ShiftScaleRotate(p=0.8, border_mode=0), # シフト、スケーリング、回転
                 # A.PadIfNeeded(min_height=size, min_width=size, always_apply=True, border_mode=0), # 必要に応じてパディングを追加
                 # A.RandomCrop(height=size, width=size, always_apply=True), # ランダムにクロップ, Moduleの中で計算する際に次元がバッチ内で揃っている必要があるので最後にサイズは揃える
@@ -450,7 +458,7 @@ class SubvolumeDataset(Dataset):
                 #     mean= [0] * Z_DIM,
                 #     std= [1] * Z_DIM
                 # ),
-                # A.FromFloat(),
+                A.FromFloat(max_value=possible_max_input - possible_min_input),
             ])(image=subvolume, mask=label)            
             subvolume = performed["image"]            
             label = performed["mask"]
@@ -465,10 +473,12 @@ class SubvolumeDataset(Dataset):
             label = torch.from_numpy(label.transpose(2, 0, 1).astype(np.uint8)) 
         else:
             performed = A.Compose([            
+                A.ToFloat(max_value=possible_max_input - possible_min_input),
                 # A.Normalize(
                 #     mean= [0] * Z_DIM,
                 #     std= [1] * Z_DIM
                 # ),
+                A.FromFloat(max_value=possible_max_input - possible_min_input),
             ])(image=subvolume)
             subvolume = performed["image"]
             subvolume = torch.from_numpy(subvolume.transpose(2, 0, 1).astype(np.float32))
@@ -483,7 +493,7 @@ class SubvolumeDataset(Dataset):
 # 
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[ ]:
+# In[30]:
 
 
 def visualize_valid_dataset_patches(val_locations_ds):
@@ -501,7 +511,7 @@ def visualize_valid_dataset_patches(val_locations_ds):
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[ ]:
+# In[31]:
 
 
 def trivial_baseline(dataset):
@@ -519,7 +529,7 @@ def trivial_baseline(dataset):
 
 # ## Model
 
-# In[ ]:
+# In[32]:
 
 
 class Model(pl.LightningModule):
@@ -534,6 +544,7 @@ class Model(pl.LightningModule):
         self.model = smp.UnetPlusPlus(
             encoder_name=encoder_name, 
             encoder_weights="imagenet",
+            # encoder_weights=None,
             encoder_depth=5,
             decoder_channels=[1024, 512, 256, 128, 64],
             in_channels=in_channels,
@@ -655,7 +666,7 @@ class Model(pl.LightningModule):
         return out
 
     def test_step(self, batch, batch_idx):
-        global predictions_map
+        global predictions_map, predictions_map_counts
 
         patch_batch, loc_batch = batch
         
@@ -672,9 +683,14 @@ class Model(pl.LightningModule):
         predictions = predictions.cpu().numpy()  # move predictions to cpu and convert to numpy
         for (y, x), pred in zip(loc_batch, predictions):
             # print("index: ", index ,"x, y, pred", x.item(), y.item(), pred[BUFFER, BUFFER, :].item(), file=open('log.out', 'a'))
+            print("pred", pred)
             predictions_map[
                 x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :
-            ][pred > threshold] = 1
+            ] += pred
+            predictions_map_counts[x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :] += 1
+        predictions_map /= (predictions_map_counts + exp)
+        # print("predictions_map", predictions_map)
+        # print("predictions_map_count", predictions_map_counts)
         self.test_step_outputs.append(predictions)
         return predictions
 
@@ -690,7 +706,7 @@ class Model(pl.LightningModule):
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "valid_dataset_iou"}
 
 
-# In[ ]:
+# In[33]:
 
 
 k_folds = 2
@@ -701,7 +717,7 @@ kfold = KFold(
 
 # Init the neural network
 model = Model(
-    encoder_name="resnet50",
+    encoder_name="se_resnext50_32x4d",
     in_channels=Z_DIM,
     out_classes=1,
 )
@@ -780,9 +796,11 @@ from skimage.transform import resize as resize_ski
 import pathlib
 
 predictions_map = None
+predictions_map_counts = None
 
 def compute_predictions_map(split, index):
     global predictions_map
+    global predictions_map_counts
     
     print(f"Load data for {split}/{index}")
 
@@ -790,7 +808,7 @@ def compute_predictions_map(split, index):
     test_mask = load_mask(split=split, index=index)    
 
     test_locations = []
-    stride = BUFFER // 2
+    stride = BUFFER // 4
     for y in range(BUFFER, test_volume.shape[0] - BUFFER, stride):
         for x in range(BUFFER, test_volume.shape[1] - BUFFER, stride):
             test_locations.append((y, x))
@@ -807,6 +825,7 @@ def compute_predictions_map(split, index):
 
     # shape: (X, Y, C)
     predictions_map = np.zeros_like(test_volume[:, :, 0]).transpose((1, 0))[:, :, np.newaxis].astype(np.float64)
+    predictions_map_counts = np.zeros_like(predictions_map).astype(np.uint8)
 
     # print("test_volume.shape", test_volume.shape)
     # print("predictions_map.shape", predictions_map.shape)
@@ -815,7 +834,7 @@ def compute_predictions_map(split, index):
     
     model = Model.load_from_checkpoint(
         "weights/weights.ckpt",
-        encoder_name="resnet50",
+        encoder_name="se_resnext50_32x4d",
         in_channels=Z_DIM,
         out_classes=1,
     )
