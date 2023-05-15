@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[1]:
+# In[ ]:
 
 
 import numpy as np
@@ -60,7 +60,7 @@ pytorch_lightning.seed_everything(seed=42)
 torch.set_float32_matmul_precision('high')
 
 
-# In[2]:
+# In[ ]:
 
 
 # plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
@@ -72,7 +72,7 @@ plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
 
 # ## Load up the training data
 
-# In[3]:
+# In[ ]:
 
 
 def resize(img):
@@ -113,7 +113,7 @@ ax2.imshow(labels, cmap='gray')
 plt.show()
 
 
-# In[4]:
+# In[ ]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -141,7 +141,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[5]:
+# In[ ]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -158,7 +158,7 @@ plt.tight_layout()
 plt.show()
 
 
-# In[6]:
+# In[ ]:
 
 
 def load_volume(split, index):
@@ -175,7 +175,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[7]:
+# In[ ]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -191,7 +191,7 @@ volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1
 print(f"total volume: {volume.shape}")
 
 
-# In[8]:
+# In[ ]:
 
 
 del volume_train_1
@@ -199,7 +199,7 @@ del volume_train_2
 del volume_train_3
 
 
-# In[9]:
+# In[ ]:
 
 
 labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -208,7 +208,7 @@ mask = np.concatenate([mask_train_1, mask_train_2, mask_train_3], axis=1)
 print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[10]:
+# In[ ]:
 
 
 # Free up memory
@@ -224,7 +224,7 @@ del mask_train_3
 # 
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[11]:
+# In[ ]:
 
 
 fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -238,26 +238,26 @@ plt.show()
 # ## Create a dataset in the input volume
 # 
 
-# In[12]:
+# In[ ]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[13]:
+# In[ ]:
 
 
 volume.shape
 
 
-# In[14]:
+# In[ ]:
 
 
 mask.shape
 
 
-# In[15]:
+# In[ ]:
 
 
 is_in_mask_train = lambda x: is_in_masked_zone(x, mask)
@@ -277,7 +277,7 @@ for y in range(BUFFER, volume_height - BUFFER, BUFFER // 3):
 locations_ds = np.stack(locations, axis=0)
 
 
-# In[16]:
+# In[ ]:
 
 
 locations_ds.shape
@@ -287,7 +287,7 @@ locations_ds.shape
 # 
 # Sanity check visually that our patches are where they should be.
 
-# In[17]:
+# In[ ]:
 
 
 fig, ax = plt.subplots()
@@ -300,72 +300,72 @@ for y, x in locations_ds:
 plt.show()
 
 
-# In[18]:
+# In[ ]:
 
 
 from scipy.stats import median_abs_deviation
 all_MAD = median_abs_deviation(volume, axis=[0, 1])
 
 
-# In[19]:
+# In[ ]:
 
 
 all_median = np.median(volume, axis=[0, 1])
 
 
-# In[20]:
+# In[ ]:
 
 
 mean = np.mean(volume)
 
 
-# In[21]:
+# In[ ]:
 
 
 mean
 
 
-# In[22]:
+# In[ ]:
 
 
 std = np.std(volume)
 
 
-# In[23]:
+# In[ ]:
 
 
 std
 
 
-# In[24]:
+# In[ ]:
 
 
 possible_max_input = ((2 ** 8 - 1) - all_median.min()) / all_MAD.min()
 possible_max_input
 
 
-# In[25]:
+# In[ ]:
 
 
 possible_min_input = ((0) - all_median.min()) / all_MAD.min()
 possible_min_input
 
 
-# In[26]:
+# In[ ]:
 
 
 print("all_median", all_median)
 "all_median", all_median
 
 
-# In[27]:
+# In[ ]:
 
 
 print("all_MAD", all_MAD)
 "all_MAD", all_MAD
 
 
-# In[28]:
+# In[ ]:
 
 
 printed = True
@@ -397,7 +397,7 @@ def extract_subvolume(location, volume):
 
 # ## SubvolumeDataset
 
-# In[29]:
+# In[ ]:
 
 
 import torch
@@ -421,7 +421,7 @@ class SubvolumeDataset(Dataset):
         location = np.array(self.locations[idx])
         y, x = location[0], location[1]
 
-        subvolume = extract_subvolume(location, self.volume) + possible_min_input  
+        subvolume = extract_subvolume(location, self.volume) - possible_min_input  
         # print("subvolume", subvolume)
         # print("labels", labels)
         # subvolume = subvolume.numpy()
@@ -458,7 +458,7 @@ class SubvolumeDataset(Dataset):
                 #     mean= [0] * Z_DIM,
                 #     std= [1] * Z_DIM
                 # ),
-                A.FromFloat(max_value=possible_max_input - possible_min_input),
+                # A.FromFloat(max_value=possible_max_input - possible_min_input),
             ])(image=subvolume, mask=label)            
             subvolume = performed["image"]            
             label = performed["mask"]
@@ -478,7 +478,7 @@ class SubvolumeDataset(Dataset):
                 #     mean= [0] * Z_DIM,
                 #     std= [1] * Z_DIM
                 # ),
-                A.FromFloat(max_value=possible_max_input - possible_min_input),
+                # A.FromFloat(max_value=possible_max_input - possible_min_input),
             ])(image=subvolume)
             subvolume = performed["image"]
             subvolume = torch.from_numpy(subvolume.transpose(2, 0, 1).astype(np.float32))
@@ -493,7 +493,7 @@ class SubvolumeDataset(Dataset):
 # 
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[30]:
+# In[ ]:
 
 
 def visualize_valid_dataset_patches(val_locations_ds):
@@ -511,7 +511,7 @@ def visualize_valid_dataset_patches(val_locations_ds):
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[31]:
+# In[ ]:
 
 
 def trivial_baseline(dataset):
@@ -529,7 +529,7 @@ def trivial_baseline(dataset):
 
 # ## Model
 
-# In[32]:
+# In[ ]:
 
 
 class Model(pl.LightningModule):
@@ -706,7 +706,7 @@ class Model(pl.LightningModule):
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "valid_dataset_iou"}
 
 
-# In[33]:
+# In[34]:
 
 
 k_folds = 2
