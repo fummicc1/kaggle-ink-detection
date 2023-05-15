@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[1]:
+# In[ ]:
 
 
 import numpy as np
@@ -37,42 +37,51 @@ import torch.utils.data
 # Data config
 # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
 DATA_DIR = '/home/fummicc1/codes/competitions/kaggle-ink-detection'
-BUFFER = 128  # Half-size of papyrus patches we'll use as model inputs
+BUFFER = 160  # Half-size of papyrus patches we'll use as model inputs
 Z_LIST = list(range(0, 65, 3))  # Offset of slices in the z direction
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
-SHARED_HEIGHT = 4000  # Height to resize all papyrii
+MAX_LENGTH = 4800  # Max length(width or height) to resize all papyrii
 
 # Model config
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 
 device = torch.device("cuda")
 threshold = 0.5
 num_workers = 4
 exp = 1e-7
 
-num_epochs = 60
+num_epochs = 120
 lr = 1e-4
 
 pytorch_lightning.seed_everything(seed=42)
 torch.set_float32_matmul_precision('high')
 
 
-# In[2]:
+# In[ ]:
 
 
-plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
+# plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
+# plt.imshow(Image.open(DATA_DIR + "/train/2/ir.png"), cmap="gray")
+# plt.imshow(Image.open(DATA_DIR + "/train/3/ir.png"), cmap="gray")
+plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
+# plt.imshow(Image.open(DATA_DIR + "/test/b/mask.png"), cmap="gray")
 
 
 # ## Load up the training data
 
-# In[3]:
+# In[ ]:
 
 
 def resize(img):
     current_height, current_width = img.shape    
     aspect_ratio = current_width / current_height
-    new_width = int(SHARED_HEIGHT * aspect_ratio)
-    new_size = (new_width, SHARED_HEIGHT)
+    if current_width > current_height:
+        new_height = int(MAX_LENGTH / aspect_ratio)
+        new_width = MAX_LENGTH
+    else:
+        new_height = MAX_LENGTH
+        new_width = int(MAX_LENGTH * aspect_ratio)
+    new_size = (new_width, new_height)
     # (W, H)の順で渡すが結果は(H, W)になっている
     img = cv2.resize(img, new_size)
     return img
@@ -100,7 +109,7 @@ ax2.imshow(labels, cmap='gray')
 plt.show()
 
 
-# In[4]:
+# In[ ]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -128,7 +137,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[5]:
+# In[ ]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -141,11 +150,11 @@ ax2.imshow(labels_train_2, cmap='gray')
 
 ax3.set_title("labels_train_3")
 ax3.imshow(labels_train_3, cmap='gray')
-
+plt.tight_layout()
 plt.show()
 
 
-# In[6]:
+# In[ ]:
 
 
 def load_volume(split, index):
@@ -162,7 +171,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[7]:
+# In[ ]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -178,7 +187,7 @@ volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1
 print(f"total volume: {volume.shape}")
 
 
-# In[8]:
+# In[ ]:
 
 
 del volume_train_1
@@ -186,7 +195,7 @@ del volume_train_2
 del volume_train_3
 
 
-# In[9]:
+# In[ ]:
 
 
 labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -195,7 +204,7 @@ mask = np.concatenate([mask_train_1, mask_train_2, mask_train_3], axis=1)
 print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[10]:
+# In[ ]:
 
 
 # Free up memory
@@ -211,7 +220,7 @@ del mask_train_3
 # 
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[11]:
+# In[ ]:
 
 
 fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -225,26 +234,26 @@ plt.show()
 # ## Create a dataset in the input volume
 # 
 
-# In[12]:
+# In[ ]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[13]:
+# In[ ]:
 
 
 volume.shape
 
 
-# In[14]:
+# In[ ]:
 
 
 mask.shape
 
 
-# In[15]:
+# In[ ]:
 
 
 is_in_mask_train = lambda x: is_in_masked_zone(x, mask)
@@ -264,7 +273,7 @@ for y in range(BUFFER, volume_height - BUFFER, BUFFER // 2):
 locations_ds = np.stack(locations, axis=0)
 
 
-# In[16]:
+# In[ ]:
 
 
 locations_ds.shape
@@ -274,7 +283,7 @@ locations_ds.shape
 # 
 # Sanity check visually that our patches are where they should be.
 
-# In[17]:
+# In[ ]:
 
 
 fig, ax = plt.subplots()
@@ -291,38 +300,38 @@ for y, x in locations_ds:
 plt.show()
 
 
-# In[18]:
+# In[ ]:
 
 
 from scipy.stats import median_abs_deviation
 all_MAD = median_abs_deviation(volume, axis=[0, 1])
 
 
-# In[19]:
+# In[ ]:
 
 
 all_median = np.median(volume, axis=[0, 1])
 
 
-# In[20]:
+# In[ ]:
 
 
 mean = np.mean(volume)
 
 
-# In[21]:
+# In[ ]:
 
 
 mean
 
 
-# In[22]:
+# In[ ]:
 
 
 std = np.std(volume)
 
 
-# In[23]:
+# In[ ]:
 
 
 std
@@ -429,26 +438,13 @@ class SubvolumeDataset(Dataset):
                 # A.ToFloat(max_value=possible_max_input),
                 A.HorizontalFlip(p=0.5), # 水平方向に反転
                 A.VerticalFlip(p=0.5), # 水平方向に反転
-                A.ShiftScaleRotate(p=1, border_mode=0), # シフト、スケーリング、回転
+                A.ShiftScaleRotate(p=0.8, border_mode=0), # シフト、スケーリング、回転
                 # A.PadIfNeeded(min_height=size, min_width=size, always_apply=True, border_mode=0), # 必要に応じてパディングを追加
                 # A.RandomCrop(height=size, width=size, always_apply=True), # ランダムにクロップ, Moduleの中で計算する際に次元がバッチ内で揃っている必要があるので最後にサイズは揃える
-                A.Perspective(p=0.5), # パースペクティブ変換
-                A.OneOf([
-                    A.GaussNoise(var_limit=[10, 50]),
-                    A.GaussianBlur(),
-                    A.MotionBlur(),
-                ], p=0.4),
+                A.Perspective(p=0.5), # パースペクティブ変換                
                 A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
                 A.CoarseDropout(max_holes=1, max_width=int(size * 0.3), max_height=int(size * 0.3), 
-                                mask_fill_value=0, p=0.5),
-                # A.OneOf(
-                #     [
-                #         A.Sharpen(p=1),
-                #         A.Blur(blur_limit=3, p=1),
-                #         A.MotionBlur(blur_limit=3, p=1),
-                #     ],
-                #     p=0.9,
-                # ),
+                                mask_fill_value=0, p=0.5),                
                 A.Resize(BUFFER * 2, BUFFER * 2, always_apply=True),
                 # A.Normalize(
                 #     mean= [0] * Z_DIM,
@@ -539,7 +535,7 @@ class Model(pl.LightningModule):
             encoder_name=encoder_name, 
             encoder_weights="imagenet",
             encoder_depth=5,
-            decoder_channels=[1024, 512, 256, 128, 32],
+            decoder_channels=[1024, 512, 256, 128, 64],
             in_channels=in_channels,
             classes=out_classes,
             **kwargs,
@@ -697,7 +693,7 @@ class Model(pl.LightningModule):
 # In[ ]:
 
 
-k_folds = 4
+k_folds = 2
 kfold = KFold(
     n_splits=k_folds,
     shuffle=True
@@ -871,7 +867,7 @@ def update_submission(predictions_map, index):
 
 
 print("Id,Predicted", file=open('submission.csv', 'w'))
-kind = "train"
+kind = "test"
 folder = pathlib.Path(DATA_DIR) / kind
 for p in list(folder.iterdir()):
     index = p.stem
