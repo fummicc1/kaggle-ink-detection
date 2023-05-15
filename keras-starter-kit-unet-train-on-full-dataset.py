@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[45]:
+# In[ ]:
 
 
 import numpy as np
@@ -14,6 +14,9 @@ import torch.nn as nn
 import torchvision
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+import pytorch_lightning
+import segmentation_models_pytorch as smp
+import pytorch_lightning as pl
 
 import glob
 import time
@@ -22,47 +25,63 @@ import matplotlib.pyplot as plt
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import matplotlib.patches as patches
+from sklearn.model_selection import KFold
 from tqdm import tqdm
 import cv2
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.utils.data
+
 
 # Data config
+# DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
 DATA_DIR = '/home/fummicc1/codes/competitions/kaggle-ink-detection'
-BUFFER = 64  # Half-size of papyrus patches we'll use as model inputs
-Z_LIST = list(range(0, 65, 4))  # Offset of slices in the z direction
+BUFFER = 160  # Half-size of papyrus patches we'll use as model inputs
+Z_LIST = list(range(0, 65, 3))  # Offset of slices in the z direction
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
-SHARED_HEIGHT = 4000  # Height to resize all papyrii
-
-# (y, x)
-val_location = (600, 500)
-val_zone_size = (1000, 2000)
+MAX_LENGTH = 4800  # Max length(width or height) to resize all papyrii
 
 # Model config
-BATCH_SIZE = 64
-USE_MIXED_PRECISION = False
-USE_JIT_COMPILE = False
+BATCH_SIZE = 32
 
 device = torch.device("cuda")
-threshold = 0.2
-num_workers = 2
+threshold = 0.5
+num_workers = 4
 exp = 1e-7
 
+num_epochs = 120
+lr = 1e-4
 
-# In[46]:
+pytorch_lightning.seed_everything(seed=42)
+torch.set_float32_matmul_precision('high')
 
 
-plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
+# In[ ]:
+
+
+# plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
+# plt.imshow(Image.open(DATA_DIR + "/train/2/ir.png"), cmap="gray")
+# plt.imshow(Image.open(DATA_DIR + "/train/3/ir.png"), cmap="gray")
+plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
+# plt.imshow(Image.open(DATA_DIR + "/test/b/mask.png"), cmap="gray")
 
 
 # ## Load up the training data
 
-# In[47]:
+# In[ ]:
 
 
 def resize(img):
     current_height, current_width = img.shape    
     aspect_ratio = current_width / current_height
-    new_width = int(SHARED_HEIGHT * aspect_ratio)
-    new_size = (new_width, SHARED_HEIGHT)
+    if current_width > current_height:
+        new_height = int(MAX_LENGTH / aspect_ratio)
+        new_width = MAX_LENGTH
+    else:
+        new_height = MAX_LENGTH
+        new_width = int(MAX_LENGTH * aspect_ratio)
+    new_size = (new_width, new_height)
     # (W, H)の順で渡すが結果は(H, W)になっている
     img = cv2.resize(img, new_size)
     return img
@@ -90,7 +109,7 @@ ax2.imshow(labels, cmap='gray')
 plt.show()
 
 
-# In[48]:
+# In[ ]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -118,7 +137,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[49]:
+# In[ ]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -131,11 +150,11 @@ ax2.imshow(labels_train_2, cmap='gray')
 
 ax3.set_title("labels_train_3")
 ax3.imshow(labels_train_3, cmap='gray')
-
+plt.tight_layout()
 plt.show()
 
 
-# In[50]:
+# In[ ]:
 
 
 def load_volume(split, index):
@@ -147,11 +166,12 @@ def load_volume(split, index):
     for z, filename in  tqdm(enumerate(z_slices_fnames)):
         img = cv2.imread(filename, -1)
         img = resize(img)
+        img = (img / (2 ** 8)).astype(np.uint8)
         z_slices.append(img)
     return np.stack(z_slices, axis=-1)
 
 
-# In[51]:
+# In[ ]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -167,7 +187,7 @@ volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1
 print(f"total volume: {volume.shape}")
 
 
-# In[52]:
+# In[ ]:
 
 
 del volume_train_1
@@ -175,7 +195,7 @@ del volume_train_2
 del volume_train_3
 
 
-# In[53]:
+# In[ ]:
 
 
 labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -184,7 +204,7 @@ mask = np.concatenate([mask_train_1, mask_train_2, mask_train_3], axis=1)
 print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[54]:
+# In[ ]:
 
 
 # Free up memory
@@ -200,7 +220,7 @@ del mask_train_3
 # 
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[55]:
+# In[ ]:
 
 
 fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -211,154 +231,137 @@ fig.tight_layout()
 plt.show()
 
 
-# ## Selection a validation holdout area
+# ## Create a dataset in the input volume
 # 
-# We set aside some fraction of the input to validate our model on.
 
-# In[56]:
-
-
-fig, ax = plt.subplots()
-ax.imshow(labels)
-patch = patches.Rectangle([val_location[1], val_location[0]], val_zone_size[1], val_zone_size[0], linewidth=2, edgecolor='g', facecolor='none')
-ax.add_patch(patch)
-plt.show()
-
-
-# ## Create a dataset that samples random locations in the input volume
-# 
-# Our training dataset will grab random patches within the masked area and outside of the validation area.
-
-# In[57]:
-
-
-def sample_random_location(shape):
-    random_train_x = np.random.randint(low=BUFFER, high=shape[1] - BUFFER - 1, size=())
-    random_train_y = np.random.randint(low=BUFFER, high=shape[0] - BUFFER - 1, size=())
-    random_train_location = np.stack([random_train_y, random_train_x], axis=-1)
-    return random_train_location
+# In[ ]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
-def is_in_val_zone(location, val_location, val_zone_size):
-    x = location[1]
-    y = location[0]
-    x_match = val_location[1] - BUFFER <= x <= val_location[1] + val_zone_size[1] + BUFFER
-    y_match = val_location[0] - BUFFER <= y <= val_location[0] + val_zone_size[0] + BUFFER
-    return x_match and y_match
 
-def is_proper_train_location(location):
-    return not is_in_val_zone(location, val_location, val_zone_size) and is_in_mask_train(location)
+# In[ ]:
 
 
-# In[58]:
+volume.shape
 
 
-sample_random_location_train = lambda x: sample_random_location(volume.shape[:-1])
+# In[ ]:
+
+
+mask.shape
+
+
+# In[ ]:
+
+
 is_in_mask_train = lambda x: is_in_masked_zone(x, mask)
 
 # Create a list to store train locations
-train_locations = []
-
-# Define the number of train locations you want to generate
-num_train_locations = 20000
+locations = []
 
 # Generate train locations
-while len(train_locations) < num_train_locations:
-    location = sample_random_location_train(0)
-    if is_proper_train_location(location):
-        train_locations.append(location)
+volume_height,volume_width = volume.shape[:-1]
+
+for y in range(BUFFER, volume_height - BUFFER, BUFFER // 2):
+    for x in range(BUFFER, volume_width - BUFFER, BUFFER // 2):
+        if is_in_mask_train((y, x)):
+            locations.append((y, x))
 
 # Convert the list of train locations to a PyTorch tensor
-train_locations_ds = np.stack(train_locations, axis=0)
+locations_ds = np.stack(locations, axis=0)
+
+
+# In[ ]:
+
+
+locations_ds.shape
 
 
 # ## Visualize some training patches
 # 
 # Sanity check visually that our patches are where they should be.
 
-# In[59]:
+# In[ ]:
 
 
 fig, ax = plt.subplots()
 ax.imshow(labels)
 
 # Define the number of samples you want to take from train_locations_ds
-num_samples = 20000
+num_samples = 4000
 
 # Iterate over the first 'num_samples' elements in train_locations_ds
-for i in range(num_samples):
-    y, x = train_locations_ds[i]
+for y, x in locations_ds:
     patch = Rectangle([x - BUFFER, y - BUFFER], 2 * BUFFER, 2 * BUFFER, linewidth=2, edgecolor='r', facecolor='none')
     ax.add_patch(patch)
 
-val_patch = patches.Rectangle([val_location[1], val_location[0]], val_zone_size[1], val_zone_size[0], linewidth=2, edgecolor='g', facecolor='none')
-ax.add_patch(val_patch)
 plt.show()
 
 
-# In[60]:
+# In[ ]:
 
 
 from scipy.stats import median_abs_deviation
 all_MAD = median_abs_deviation(volume, axis=[0, 1])
 
 
-# In[61]:
+# In[ ]:
 
 
 all_median = np.median(volume, axis=[0, 1])
 
 
-# In[62]:
+# In[ ]:
 
 
 mean = np.mean(volume)
 
 
-# In[63]:
+# In[ ]:
 
 
 mean
 
 
-# In[64]:
+# In[ ]:
 
 
 std = np.std(volume)
 
 
-# In[65]:
+# In[ ]:
 
 
 std
 
 
-# In[66]:
+# In[ ]:
 
 
 possible_max_input = ((2 ** 16 - 1) / all_median.min())
 possible_max_input
 
 
-# In[67]:
+# In[ ]:
 
 
 print("all_median", all_median)
+"all_median", all_median
 
 
-# In[68]:
+# In[ ]:
 
 
 print("all_MAD", all_MAD)
+"all_MAD", all_MAD
 
 
-# In[69]:
+# In[ ]:
 
 
-printed = False
+printed = True
 
 def extract_subvolume(location, volume):
     global printed
@@ -376,7 +379,7 @@ def extract_subvolume(location, volume):
     # print("mean", mean)
     # print("median", median[0, 0, :])
     
-    subvolume = (subvolume / median)
+    subvolume = (subvolume - median) / MAD
     
     if not printed:
         print("subvolume after taking care of median and MAD", subvolume)
@@ -385,9 +388,9 @@ def extract_subvolume(location, volume):
     return subvolume
 
 
-# ## Create training dataset that yields random subvolumes and their labels
+# ## SubvolumeDataset
 
-# In[70]:
+# In[ ]:
 
 
 import torch
@@ -429,47 +432,46 @@ class SubvolumeDataset(Dataset):
         if self.is_train and label is not None:            
             
             # print("label", label.dtype)
-            # print("subvolume in dataset (before aug)", subvolume)            
+            # print("subvolume in dataset (before aug)", subvolume)    
+            size = int(BUFFER * 2)
             performed = A.Compose([            
-                A.ToFloat(max_value=possible_max_input),
+                # A.ToFloat(max_value=possible_max_input),
                 A.HorizontalFlip(p=0.5), # 水平方向に反転
-                A.ShiftScaleRotate(scale_limit=0.5, rotate_limit=0, shift_limit=0.1, p=1, border_mode=0), # シフト、スケーリング、回転
-                A.GaussNoise(p=0.2), # ガウスノイズを追加
-                A.Perspective(p=0.5), # パースペクティブ変換                   
-                A.OneOf(
-                    [
-                        A.Sharpen(p=1),
-                        A.Blur(blur_limit=3, p=1),
-                        A.MotionBlur(blur_limit=3, p=1),
-                    ],
-                    p=0.9,
-                ),
-                A.PadIfNeeded(min_height=BUFFER * 2, min_width=BUFFER * 2, always_apply=True, border_mode=0), # 必要に応じてパディングを追加
-                A.RandomCrop(height=BUFFER * 2, width=BUFFER * 2, always_apply=True), # ランダムにクロップ, Moduleの中で計算する際に次元がバッチ内で揃っている必要があるので最後にサイズは揃える
-                A.FromFloat(max_value=possible_max_input),
-            ])(image=subvolume, mask=label)
+                A.VerticalFlip(p=0.5), # 水平方向に反転
+                A.ShiftScaleRotate(p=0.8, border_mode=0), # シフト、スケーリング、回転
+                # A.PadIfNeeded(min_height=size, min_width=size, always_apply=True, border_mode=0), # 必要に応じてパディングを追加
+                # A.RandomCrop(height=size, width=size, always_apply=True), # ランダムにクロップ, Moduleの中で計算する際に次元がバッチ内で揃っている必要があるので最後にサイズは揃える
+                A.Perspective(p=0.5), # パースペクティブ変換                
+                A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
+                A.CoarseDropout(max_holes=1, max_width=int(size * 0.3), max_height=int(size * 0.3), 
+                                mask_fill_value=0, p=0.5),                
+                A.Resize(BUFFER * 2, BUFFER * 2, always_apply=True),
+                # A.Normalize(
+                #     mean= [0] * Z_DIM,
+                #     std= [1] * Z_DIM
+                # ),
+                # A.FromFloat(),
+            ])(image=subvolume, mask=label)            
             subvolume = performed["image"]            
             label = performed["mask"]
             # print("subvolume in dataset (after aug)", subvolume)
             # print("label", label.dtype)
             # print("subvolume", subvolume.dtype)
             # →C, H, W
-            subvolume = torch.from_numpy(subvolume.transpose(2, 0, 1).astype(np.float64))
+            subvolume = torch.from_numpy(subvolume.transpose(2, 0, 1).astype(np.float32))
             # print(performed)
             # print(subvolume.shape, label.shape)
             # H, W, C → C, H, W
             label = torch.from_numpy(label.transpose(2, 0, 1).astype(np.uint8)) 
         else:
-            performed = A.Compose([  
-                A.ToFloat(max_value=possible_max_input),                
+            performed = A.Compose([            
                 # A.Normalize(
-                #     mean=[mean],
-                #     std=[std],
+                #     mean= [0] * Z_DIM,
+                #     std= [1] * Z_DIM
                 # ),
-                A.FromFloat(max_value=possible_max_input),
             ])(image=subvolume)
             subvolume = performed["image"]
-            subvolume = torch.from_numpy(subvolume.transpose(2, 0, 1).astype(np.float64))
+            subvolume = torch.from_numpy(subvolume.transpose(2, 0, 1).astype(np.float32))
             if label is not None:
                 label = torch.from_numpy(label.transpose(2, 0, 1).astype(np.uint8)) 
         if self.return_location:
@@ -477,80 +479,21 @@ class SubvolumeDataset(Dataset):
         return subvolume, label        
 
 
-# In[71]:
-
-
-# Convert train_locations_ds to a PyTorch tensor
-train_locations_tensor = np.stack([x for x in train_locations_ds], axis=0)
-
-# Create an instance of the SubvolumeDataset
-train_ds = SubvolumeDataset(train_locations_tensor, volume, labels, BUFFER, is_train=True)
-
-
-# In[72]:
-
-
-# Create a DataLoader with the dataset
-train_dataloader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=num_workers)
-
-
-# In[73]:
-
-
-subvolume_batch, label_batch = train_ds[1]
-print(f"subvolume shape: {subvolume_batch.shape}")
-print(f"label_batch shape: {label_batch.shape}")
-
-
-# ## Check dataset throughput
-# 
-# It's always a good idea to check that your data pipeline is efficient. You don't want to be CPU-bound at training time!
-
-# In[74]:
-
-
-# t0 = time.time()
-# n = 200
-# for _ in train_ds:
-#     pass
-# print(f"Time per batch: {(time.time() - t0) / n:.4f}s")
-
-
-# ## Create validation dataset
-
-# In[75]:
-
-
-val_locations_stride = BUFFER
-val_locations = []
-for x in range(val_location[0], val_location[0] + val_zone_size[0], val_locations_stride):
-    for y in range(val_location[1], val_location[1] + val_zone_size[1], val_locations_stride):
-        val_locations.append((x, y))
-
-# Convert the list of val locations to a PyTorch tensor
-val_locations_ds = np.stack(val_locations, axis=0)
-
-# Create an instance of the SubvolumeDataset
-val_ds = SubvolumeDataset(val_locations_ds, volume, labels, BUFFER, is_train=False)
-
-# Create a DataLoader with the dataset
-val_dataloader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=num_workers)
-
-
 # ## Visualize validation dataset patches
 # 
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[76]:
+# In[ ]:
 
 
-fig, ax = plt.subplots()
-ax.imshow(labels)
+def visualize_valid_dataset_patches(val_locations_ds):
+    fig, ax = plt.subplots()
+    ax.imshow(labels)
 
-for y, x in val_locations_ds:
-    patch = patches.Rectangle([x - BUFFER, y - BUFFER], 2 * BUFFER, 2 * BUFFER, linewidth=2, edgecolor='g', facecolor='none')
-    ax.add_patch(patch)
-plt.show()
+    for y, x in val_locations_ds:
+        patch = patches.Rectangle([x - BUFFER, y - BUFFER], 2 * BUFFER, 2 * BUFFER, linewidth=2, edgecolor='g', facecolor='none')
+        ax.add_patch(patch)
+    plt.show()
 
 
 # ## Compute a trivial baseline
@@ -558,7 +501,7 @@ plt.show()
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[77]:
+# In[ ]:
 
 
 def trivial_baseline(dataset):
@@ -570,203 +513,243 @@ def trivial_baseline(dataset):
         total += torch.numel(batch_label)
     return 1. - matches / total
 
-score = trivial_baseline(val_ds).item()
-print(f"Best validation score achievable trivially: {score * 100:.2f}% accuracy")
+# score = trivial_baseline(val_ds).item()
+# print(f"Best validation score achievable trivially: {score * 100:.2f}% accuracy")
 
 
-# ## Augment the training data
+# ## Model
 
-# ## Train a Keras model
-# 
-# This model is a U-Net taken from [this segmentation tutorial](https://keras.io/examples/vision/oxford_pets_image_segmentation/).
-# 
-# `model.fit()` goes brrrrr
-# 
-# Conceptually it looks like this (animation from [this tutorial](https://www.kaggle.com/code/jpposma/vesuvius-challenge-ink-detection-tutorial)):
-# 
-# ![animation](https://user-images.githubusercontent.com/22727759/224853385-ed190d89-f466-469c-82a9-499881759d57.gif)
-
-# In[78]:
+# In[ ]:
 
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torchmetrics import Accuracy
-
-
-# In[86]:
-
-
-class UNet(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(UNet, self).__init__()
-
-        def conv_block(in_channels, out_channels):
-            return nn.Sequential(                
-                nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-                nn.BatchNorm2d(out_channels),
-                nn.ReLU(),
-            )
-
-        def transpose_conv_block(in_channels, out_channels):
-            return nn.Sequential(                
-                nn.ConvTranspose2d(in_channels, out_channels, kernel_size=3, padding=1),
-                nn.BatchNorm2d(out_channels),
-                nn.ReLU(),
-            )
-
-        self.encoder = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(in_channels if i == 2 else 64 * 2**(i - 1), 64 * 2**i, kernel_size=3, stride=2, padding=1),
-                nn.BatchNorm2d(64 * 2**i),
-                nn.ReLU(),
-                nn.Conv2d(64 * 2**i, 64 * 2**i, kernel_size=3, padding=1),
-                nn.BatchNorm2d(64 * 2**i),
-                nn.ReLU(),
-            )
-            for i in range(2, 5)
-        ])
-
-
-        self.middle = nn.Sequential(
-            conv_block(1024, 512),
-            conv_block(512, 1024),
-        )
+class Model(pl.LightningModule):
+    
+    training_step_outputs = []
+    validation_step_outputs = []
+    test_step_outputs = []
         
-        self.decoder = nn.ModuleList([
-            nn.Sequential(
-                transpose_conv_block(2 ** (i + 7), 2 ** (i + 6)),
-                transpose_conv_block(2 ** (i + 6), 2 ** (i + 5)),
-                nn.Upsample(scale_factor=2, mode="nearest"),
-            )
-            for i in range(4, 1, -1)
-        ])
-        self.final_decoder = nn.Sequential(
-            nn.Conv2d(128, 32, kernel_size=3, padding=1),
-            nn.Conv2d(32, out_channels, kernel_size=3, padding=1),
+
+    def __init__(self, encoder_name, in_channels, out_classes, **kwargs):
+        super().__init__()
+        self.model = smp.UnetPlusPlus(
+            encoder_name=encoder_name, 
+            encoder_weights="imagenet",
+            encoder_depth=5,
+            decoder_channels=[1024, 512, 256, 128, 64],
+            in_channels=in_channels,
+            classes=out_classes,
+            **kwargs,
         )
-        self.activation = nn.Sigmoid()
 
-    def forward(self, x):
-        # print("input:", x)
-        skip_connections = []
-        for layer in self.encoder:
-            x = layer(x)
-            skip_connections.append(x)
+        # preprocessing parameteres for image
+        params = smp.encoders.get_preprocessing_params(encoder_name)
+        # self.register_buffer("std", torch.tensor(params["std"]).view(1, 3, 1, 1))
+        # self.register_buffer("mean", torch.tensor(params["mean"]).view(1, 3, 1, 1))
 
-        x = self.middle(x)
+        # for image segmentation dice loss could be the best first choice
+        self.loss_fn = smp.losses.DiceLoss(smp.losses.BINARY_MODE, from_logits=True)
+
+    def forward(self, image):
+        # normalize image here
+        # image = (image - self.mean) / self.std
+        mask = self.model(image)
+        return mask
+
+    def shared_step(self, batch, stage):
         
-        # print("encoder ok", x)
-        for i, layer in enumerate(self.decoder):            
-            # print(f"decoder will {i}: ok", x.shape)
-            x = torch.cat([x, skip_connections[-i-1]], dim=1)  # Concatenate along channel dimension
-            # print(f"decoder with skip connection {i}: ok", x.shape)            
-            x = layer(x)            
-            # print(f"decoder {i}: ok", x)
-        # print("decoder ok")
-        x = self.final_decoder(x)
-        x = self.activation(x)
-        # print("final out", x)
-        return x
+        subvolumes, labels = batch
+        
+        image, mask = subvolumes.float(), labels.float()
+        labels = labels.squeeze(dim=1)
+        # print("torch.unique(subvolumes)", torch.unique(subvolumes), file=open("subvolumes_unique", "w"))
 
+        # Shape of the image should be (batch_size, num_channels, height, width)
+        # if you work with grayscale images, expand channels dim to have [batch_size, 1, height, width]
+        assert image.ndim == 4
 
-# In[89]:
+        # Check that image dimensions are divisible by 32, 
+        # encoder and decoder connected by `skip connections` and usually encoder have 5 stages of 
+        # downsampling by factor 2 (2 ^ 5 = 32); e.g. if we have image with shape 65x65 we will have 
+        # following shapes of features in encoder and decoder: 84, 42, 21, 10, 5 -> 5, 10, 20, 40, 80
+        # and we will get an error trying to concat these features
+        h, w = image.shape[2:]
+        assert h % 32 == 0 and w % 32 == 0
 
+        # Shape of the mask should be [batch_size, num_classes, height, width]
+        # for binary segmentation num_classes = 1
+        assert mask.ndim == 4
 
-import os
-import torch.optim.lr_scheduler
+        # Check that mask values in between 0 and 1, NOT 0 and 255 for binary segmentation
+        assert mask.max() <= 1.0 and mask.min() >= 0
 
-# Define the model
-model = UNet(Z_DIM, 1)
-model = nn.DataParallel(model)
+        logits_mask = self.forward(image)
+        
+        # Predicted mask contains logits, and loss_fn param `from_logits` is set to True
+        loss = self.loss_fn(logits_mask, mask)
 
-if os.path.exists(f"{DATA_DIR}/model.pt"):
-    # model.load_state_dict(torch.load(f"{DATA_DIR}/model.pt"))
-    pass
+        # Lets compute metrics for some threshold
+        # first convert mask values to probabilities, then 
+        # apply thresholding
+        prob_mask = logits_mask.sigmoid()
+        pred_mask = (prob_mask > threshold).float()
 
-# Mixed precision training
-# scaler = torch.cuda.amp.GradScaler(enabled=USE_MIXED_PRECISION)
+        # We will compute IoU metric by two ways
+        #   1. dataset-wise
+        #   2. image-wise
+        # but for now we just compute true positive, false positive, false negative and
+        # true negative 'pixels' for each image and class
+        # these values will be aggregated in the end of an epoch
+        tp, fp, fn, tn = smp.metrics.get_stats(pred_mask.long(), mask.long(), mode="binary")
 
-# Training loop
-num_epochs = 50
+        return {
+            "loss": loss,
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "tn": tn,
+        }
 
-# Loss, optimizer, and metric
-criterion = nn.BCELoss()
-optimizer = optim.Adam(model.parameters())
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+    def shared_epoch_end(self, outputs, stage):
+        # aggregate step metics
+        tp = torch.cat([x["tp"] for x in outputs])
+        fp = torch.cat([x["fp"] for x in outputs])
+        fn = torch.cat([x["fn"] for x in outputs])
+        tn = torch.cat([x["tn"] for x in outputs])
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = model.to(device)
-accuracy = Accuracy(task="multiclass", num_classes=2, top_k=1).to(device)
+        # per image IoU means that we first calculate IoU score for each image 
+        # and then compute mean over these scores
+        per_image_iou = smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro-imagewise")
+        
+        # dataset IoU means that we aggregate intersection and union over whole dataset
+        # and then compute IoU score. The difference between dataset_iou and per_image_iou scores
+        # in this particular case will not be much, however for dataset 
+        # with "empty" images (images without target class) a large gap could be observed. 
+        # Empty images influence a lot on per_image_iou and much less on dataset_iou.
+        dataset_iou = smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro")
+
+        metrics = {
+            f"{stage}_per_image_iou": per_image_iou,
+            f"{stage}_dataset_iou": dataset_iou,
+        }
+        
+        self.log_dict(metrics, prog_bar=True)
+
+    def training_step(self, batch, batch_idx):
+        out = self.shared_step(batch, "train")
+        self.training_step_outputs.append(out)
+        return out
+
+    def on_train_epoch_end(self):
+        out = self.shared_epoch_end(self.training_step_outputs, "train")
+        self.training_step_outputs.clear()
+        return out
+
+    def validation_step(self, batch, batch_idx):
+        out = self.shared_step(batch, "valid")
+        self.validation_step_outputs.append(out)        
+        return out
+
+    def on_validation_epoch_end(self):
+        out = self.shared_epoch_end(self.validation_step_outputs, "valid")
+        self.validation_step_outputs.clear()
+        return out
+
+    def test_step(self, batch, batch_idx):
+        global predictions_map
+
+        patch_batch, loc_batch = batch
+        
+        loc_batch = loc_batch.long()
+        patch_batch = patch_batch.float()
+        predictions: torch.Tensor = self.forward(patch_batch)
+        # print("predictions.shape", predictions.shape)
+        # print("predictions", predictions)
+        predictions = predictions.sigmoid()
+        # print("Softmaxed predictions where conf is gt threshold", predictions[predictions.gt(threshold)])
+        # print("predictions.shape after sigmoid", predictions.shape)
+        # →(BATCH, W, H, C)
+        predictions = torch.permute(predictions, (0, 3, 2, 1))
+        predictions = predictions.cpu().numpy()  # move predictions to cpu and convert to numpy
+        for (y, x), pred in zip(loc_batch, predictions):
+            # print("index: ", index ,"x, y, pred", x.item(), y.item(), pred[BUFFER, BUFFER, :].item(), file=open('log.out', 'a'))
+            predictions_map[
+                x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :
+            ][pred > threshold] = 1
+        self.test_step_outputs.append(predictions)
+        return predictions
+
+    def on_test_epoch_end(self):
+        self.test_step_outputs.clear()
+        return
+
+    def configure_optimizers(self):
+        optimizer = optim.Adam(self.parameters(), lr=lr)
+        # Using a scheduler is optional but can be helpful.
+        # The scheduler reduces the LR if the validation performance hasn't improved for the last N epochs
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.2, patience=20, min_lr=5e-5)
+        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "valid_dataset_iou"}
 
 
 # In[ ]:
 
 
-for epoch in tqdm(range(1, num_epochs + 1)):
-    model.train()
-    running_loss = 0.0
-    running_accuracy = 0.0
+k_folds = 2
+kfold = KFold(
+    n_splits=k_folds,
+    shuffle=True
+)
 
-    for idx, (subvolumes, labels) in tqdm(enumerate(train_dataloader)):
-        subvolumes, labels = subvolumes.to(device), labels.to(device)        
-        labels = labels.float().squeeze(dim=1)
-        subvolumes = subvolumes.float() 
-        # print("torch.unique(subvolumes)", torch.unique(subvolumes), file=open("subvolumes_unique", "w"))
+# Init the neural network
+model = Model(
+    encoder_name="resnet50",
+    in_channels=Z_DIM,
+    out_classes=1,
+)
 
-        optimizer.zero_grad()
+# Initialize a trainer
+trainer = pl.Trainer(
+    max_epochs=num_epochs,
+    devices="auto",
+    accelerator="auto",
+    log_every_n_steps=BATCH_SIZE // 4,
+)
 
-        outputs = model(subvolumes).squeeze(dim=1)
-        # print("outputs", outputs)
-        # print("outputs", outputs.shape, "labels", labels.shape)
-        loss = criterion(outputs, labels)  
-        # acc = accuracy(outputs, labels)
+for fold, (train_ids, val_ids) in enumerate(kfold.split(locations_ds)):
+    print(f'FOLD {fold}')
+    print('--------------------------------')
+    
+    # Sample elements randomly from a given list of ids, no replacement.
+    train_ds = SubvolumeDataset(
+        locations_ds[train_ids],
+        volume,
+        labels,
+        BUFFER,
+        is_train=True
+    )
+    val_ds = SubvolumeDataset(
+        locations_ds[val_ids],
+        volume,
+        labels,
+        BUFFER,
+        is_train=False,
+    )
+    
+    # Define data loaders for training and testing data in this fold
+    train_loader = torch.utils.data.DataLoader(
+        train_ds, 
+        batch_size=BATCH_SIZE,
+        num_workers=num_workers,
+        shuffle=True,
+    )
+    val_loader = torch.utils.data.DataLoader(
+        val_ds, 
+        batch_size=BATCH_SIZE,
+        num_workers=num_workers,
+        shuffle=False,
+    )
 
-        loss.backward()
-        optimizer.step()    
-
-        running_loss += loss.item()
-        # running_accuracy += acc
-        
-    # print("train output", outputs)
-        
-    scheduler.step()    
-        
-    running_loss /= len(train_dataloader)
-    # running_accuracy /= len(train_dataloader)
-
-    # Validation
-    model.eval()
-    val_loss = 0.0
-    val_accuracy = 0.0
-    with torch.no_grad():
-        for subvolumes, labels in tqdm(val_dataloader):
-            subvolumes, labels = subvolumes.to(device), labels.to(device)
-            labels = labels.float().squeeze(dim=1)
-            subvolumes = subvolumes.float()
-            outputs = model(subvolumes).squeeze(dim=1)
-            loss = criterion(outputs, labels)
-            # acc = accuracy(outputs, labels)
-
-            val_loss += loss.item()
-            # val_accuracy += acc    
-            
-        # print("val outputs", outputs)
-
-    val_loss /= len(val_dataloader)
-    # val_accuracy /= len(val_dataloader)
-
-    print(f"Epoch [{epoch + 1}/{num_epochs}] Loss: {running_loss:.4f} Accuracy: {running_accuracy:.4f} Val_Loss: {val_loss:.4f} Val_Accuracy: {val_accuracy:.4f}")
-
-    running_loss = 0.0
-    running_accuracy = 0.0
-    model.train()
-
-    if epoch % 10 == 0:
-        torch.save(model.state_dict(), f"model_{epoch}.pt")
-    if epoch == num_epochs - 1:
-        torch.save(model.state_dict(), f"model.pt")
+    # Train the model
+    trainer.fit(model, train_loader, val_loader)
 
 
 # ## Clear up memory
@@ -774,33 +757,17 @@ for epoch in tqdm(range(1, num_epochs + 1)):
 # In[ ]:
 
 
-del volume
-del mask
-del labels
-del train_ds
-del val_ds
+# del volume
+# del mask
+# del labels
+# del train_ds
+# del val_ds
 
 import gc
 gc.collect()
 
 
-# In[ ]:
-
-
-model = UNet(Z_DIM, 1)
-model = nn.DataParallel(model)
-model.load_state_dict(torch.load("model.pt"))
-model = model.to(device)
-
-
 # ## Compute predictions on test data
-
-# In[ ]:
-
-
-a = np.arange(10)
-a[:6][:]
-
 
 # In[ ]:
 
@@ -809,8 +776,13 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 from tqdm import tqdm
+from skimage.transform import resize as resize_ski
+import pathlib
+
+predictions_map = None
 
 def compute_predictions_map(split, index):
+    global predictions_map
     
     print(f"Load data for {split}/{index}")
 
@@ -831,43 +803,36 @@ def compute_predictions_map(split, index):
     print(f"{len(test_locations)} test locations (after filtering by mask)")
 
     test_ds = SubvolumeDataset(test_locations, test_volume, None, BUFFER, is_train=False, return_location=True)
-    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, num_workers=num_workers)
+    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, num_workers=num_workers)        
 
     # shape: (X, Y, C)
     predictions_map = np.zeros_like(test_volume[:, :, 0]).transpose((1, 0))[:, :, np.newaxis].astype(np.float64)
+
+    # print("test_volume.shape", test_volume.shape)
+    # print("predictions_map.shape", predictions_map.shape)
+
+    # print(f"Compute predictions")
     
-    print("test_volume.shape", test_volume.shape)
-    print("predictions_map.shape", predictions_map.shape)
+    model = Model.load_from_checkpoint(
+        "weights/weights.ckpt",
+        encoder_name="resnet50",
+        in_channels=Z_DIM,
+        out_classes=1,
+    )
 
-    print(f"Compute predictions")
+    trainer = pl.Trainer(
+        accelerator="gpu",
+        devices="1",
+        max_epochs=num_epochs,
+    )
 
-    model.eval()  # set model to evaluation mode
-    with torch.no_grad():    
-        for patch_batch, loc_batch in tqdm(test_loader):
-            loc_batch = loc_batch.to(device).long()
-            patch_batch = patch_batch.to(device).float()
-            predictions = model(patch_batch)
-            # print("predictions", predictions)
-            predictions = predictions.unsqueeze(dim=1)
-            print("predictions", predictions[:, :, 0, 0])
-            # print("Softmaxed predictions where conf is gt threshold", predictions[predictions.gt(threshold)])
-            # →(BATCH, W, H, C)
-            predictions = torch.permute(predictions, (0, 3, 2, 1))
-            predictions = predictions.cpu().numpy()  # move predictions to cpu and convert to numpy
-            for (y, x), pred in zip(loc_batch, predictions):
-                # print("index: ", index ,"x, y, pred", x.item(), y.item(), pred[BUFFER, BUFFER, :].item(), file=open('log.out', 'a'))
-                predictions_map[
-                    x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :
-                ][pred > threshold] = 1
-    print("predictions_map", predictions_map, file=open("predictions_map", "w"))
+    trainer.test(
+        model=model,
+        dataloaders=test_loader,
+        verbose=True,
+    )
+    # print("predictions_map", predictions_map, file=open("predictions_map", "w"))
     return predictions_map
-
-
-# In[ ]:
-
-
-from skimage.transform import resize as resize_ski
-import pathlib
 
 
 # In[ ]:
@@ -893,6 +858,7 @@ def rle(predictions_map, threshold):
 def update_submission(predictions_map, index):
     rle_ = rle(predictions_map, threshold=threshold)
     print(f"{index}," + rle_, file=open('submission.csv', 'a'))
+    # print(f"{index}," + rle_, file=open('/kaggle/working/submission.csv', 'a'))
 
 
 # ## Resize prediction maps to their original size (for submission)
@@ -901,9 +867,8 @@ def update_submission(predictions_map, index):
 
 
 print("Id,Predicted", file=open('submission.csv', 'w'))
-kind = "train"
+kind = "test"
 folder = pathlib.Path(DATA_DIR) / kind
-threshold = 0.25
 for p in list(folder.iterdir()):
     index = p.stem
     predictions_map = compute_predictions_map(split=kind, index=index)
@@ -915,16 +880,4 @@ for p in list(folder.iterdir()):
     # H, W → W, H
     update_submission(predictions_map, index)
     plt.imsave(f"{index}.png", predictions_map, cmap="gray")
-
-
-# In[ ]:
-
-
-predictions_map.shape, predictions_map.shape
-
-
-# In[ ]:
-
-
-predictions_map
 
