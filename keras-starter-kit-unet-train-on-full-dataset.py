@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[26]:
+# In[ ]:
 
 
 import numpy as np
@@ -41,13 +41,13 @@ import torch.utils.data
 # Data config
 # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
 DATA_DIR = "/home/fummicc1/codes/competitions/kaggle-ink-detection"
-BUFFER = 96  # Half-size of papyrus patches we'll use as model inputs
-Z_LIST = list(range(0, 55, 3))  # Offset of slices in the z direction
+BUFFER = 128  # Half-size of papyrus patches we'll use as model inputs
+Z_LIST = list(range(0, 45, 3))  # Offset of slices in the z direction
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
 SHARED_LENGTH = 4000  # Max length(width or height) to resize all papyrii
 
 # Model config
-BATCH_SIZE = 64
+BATCH_SIZE = 32
 
 backbone = "se_resnext50_32x4d"
 # backbone = "resnet50"
@@ -57,14 +57,14 @@ threshold = 0.5
 num_workers = 8
 exp = 1e-7
 
-num_epochs = 20
+num_epochs = 50
 lr = 5e-4
 
 pytorch_lightning.seed_everything(seed=42)
 torch.set_float32_matmul_precision("high")
 
 
-# In[27]:
+# In[ ]:
 
 
 # plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
@@ -76,7 +76,7 @@ plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
 
 # ## Load up the training data
 
-# In[28]:
+# In[ ]:
 
 
 def resize(img):
@@ -118,7 +118,7 @@ ax2.imshow(labels, cmap="gray")
 plt.show()
 
 
-# In[29]:
+# In[ ]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -146,7 +146,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[30]:
+# In[ ]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -163,7 +163,7 @@ plt.tight_layout()
 plt.show()
 
 
-# In[31]:
+# In[ ]:
 
 
 def load_volume(split, index):
@@ -180,7 +180,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[32]:
+# In[ ]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -197,7 +197,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"total volume: {volume.shape}")
 
 
-# In[33]:
+# In[ ]:
 
 
 # # labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -208,7 +208,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[34]:
+# In[ ]:
 
 
 # # Free up memory
@@ -224,7 +224,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 #
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[35]:
+# In[ ]:
 
 
 # fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -238,14 +238,14 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # ## Create a dataset in the input volume
 #
 
-# In[36]:
+# In[ ]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[37]:
+# In[ ]:
 
 
 def generate_locations_ds(volume, mask):
@@ -271,13 +271,13 @@ def generate_locations_ds(volume, mask):
 #
 # Sanity check visually that our patches are where they should be.
 
-# In[38]:
+# In[ ]:
 
 
 possible_min_input = possible_max_input = all_median = all_MAD = None
 
 
-# In[39]:
+# In[ ]:
 
 
 from scipy.stats import median_abs_deviation
@@ -289,7 +289,7 @@ def calculate_all_MAD(volume):
     print("all_MAD", all_MAD)
 
 
-# In[40]:
+# In[ ]:
 
 
 def calculate_all_median(volume):
@@ -298,7 +298,7 @@ def calculate_all_median(volume):
     print("all_median", all_median)
 
 
-# In[41]:
+# In[ ]:
 
 
 def calculate_possibles(all_median, all_MAD):
@@ -309,21 +309,21 @@ def calculate_possibles(all_median, all_MAD):
     possible_min_input = 0 / (all_median.min() + exp)
 
 
-# In[42]:
+# In[ ]:
 
 
 print("all_median", all_median)
 "all_median", all_median
 
 
-# In[43]:
+# In[ ]:
 
 
 print("all_MAD", all_MAD)
 "all_MAD", all_MAD
 
 
-# In[44]:
+# In[ ]:
 
 
 printed = True
@@ -348,7 +348,7 @@ def extract_subvolume(location, volume):
     # print("median", median[0, 0, :])
 
     # subvolume = (subvolume - median) / MAD
-    subvolume = subvolume / median
+    # subvolume = subvolume / median
 
     if not printed:
         print("subvolume after taking care of median and MAD", subvolume)
@@ -359,7 +359,7 @@ def extract_subvolume(location, volume):
 
 # ## SubvolumeDataset
 
-# In[45]:
+# In[ ]:
 
 
 import torch
@@ -423,7 +423,7 @@ class SubvolumeDataset(Dataset):
 
         if self.is_train and label is not None:
             # print("label", label.dtype)
-            # print("subvolume in dataset (before aug)", subvolume)
+            # print("subvolume in data/et (before aug)", subvolume, file=open("before-aug.log", "w"))
             size = int(BUFFER * 2)
             performed = A.Compose(
                 [
@@ -434,15 +434,10 @@ class SubvolumeDataset(Dataset):
                     A.ShiftScaleRotate(p=0.8, border_mode=0),  # シフト、スケーリング、回転
                     # A.PadIfNeeded(min_height=size, min_width=size, always_apply=True, border_mode=0), # 必要に応じてパディングを追加
                     # A.RandomCrop(height=size, width=size, always_apply=True), # ランダムにクロップ, Moduleの中で計算する際に次元がバッチ内で揃っている必要があるので最後にサイズは揃える
-                    A.Perspective(p=0.5),  # パースペクティブ変換
-                    A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
-                    A.CoarseDropout(
-                        max_holes=1,
-                        max_width=int(size * 0.3),
-                        max_height=int(size * 0.3),
-                        mask_fill_value=0,
-                        p=0.5,
-                    ),
+                    # A.Perspective(p=0.5), # パースペクティブ変換
+                    # A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
+                    # A.CoarseDropout(max_holes=1, max_width=int(size * 0.3), max_height=int(size * 0.3),
+                    #                 mask_fill_value=0, p=0.5),
                     A.Resize(BUFFER * 2, BUFFER * 2, always_apply=True),
                     # A.Normalize(
                     #     mean= [0] * Z_DIM,
@@ -455,7 +450,7 @@ class SubvolumeDataset(Dataset):
             )(image=subvolume, mask=label)
             subvolume = performed["image"]
             label = performed["mask"]
-            # print("subvolume in dataset (after aug)", subvolume)
+            # print("subvolume in dataset (after aug)", subvolume, file=open("after-aug.log", "w"))
             # print("label", label.dtype)
             # print("subvolume", subvolume.dtype)
             # →C, H, W
@@ -505,7 +500,7 @@ class SubvolumeDataset(Dataset):
 #
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[46]:
+# In[ ]:
 
 
 def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
@@ -531,7 +526,7 @@ def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[47]:
+# In[ ]:
 
 
 def trivial_baseline(dataset):
@@ -550,7 +545,7 @@ def trivial_baseline(dataset):
 
 # ## Model
 
-# In[48]:
+# In[ ]:
 
 
 class Model(pl.LightningModule):
@@ -648,6 +643,7 @@ class Model(pl.LightningModule):
         fp = torch.cat([x["fp"] for x in outputs])
         fn = torch.cat([x["fn"] for x in outputs])
         tn = torch.cat([x["tn"] for x in outputs])
+        loss = torch.sum(torch.Tensor([x["loss"] for x in outputs]))
 
         # per image IoU means that we first calculate IoU score for each image
         # and then compute mean over these scores
@@ -665,6 +661,7 @@ class Model(pl.LightningModule):
         metrics = {
             f"{stage}_per_image_iou": per_image_iou,
             f"{stage}_dataset_iou": dataset_iou,
+            f"{stage}_loss": loss,
         }
 
         self.log_dict(metrics, prog_bar=True)
@@ -723,6 +720,13 @@ class Model(pl.LightningModule):
         for (y, x), pred in zip(locs, preds):
             # print("index: ", index ,"x, y, pred", x.item(), y.item(), pred[BUFFER, BUFFER, :].item(), file=open('log.out', 'a'))
             # print("pred", pred)
+            # predictions_map[
+            #     x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :
+            # ] = np.where(predictions_map[
+            #     x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :
+            # ] < pred, pred, predictions_map[
+            #     x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :
+            # ])
             predictions_map[x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :] += pred
             predictions_map_counts[
                 x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :
@@ -744,7 +748,7 @@ class Model(pl.LightningModule):
         }
 
 
-# In[49]:
+# In[ ]:
 
 
 class EnsembleModel:
@@ -787,7 +791,7 @@ class EnsembleModel:
             )
 
 
-# In[50]:
+# In[ ]:
 
 
 k_folds = 3
@@ -798,11 +802,6 @@ data_list = [
     (volume_train_3, labels_train_3, mask_train_3),
 ]
 
-all_volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1)
-calculate_all_MAD(all_volume)
-calculate_all_median(all_volume)
-calculate_possibles(all_median, all_MAD)
-
 for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
     print(f"FOLD {fold}")
     print("--------------------------------")
@@ -812,6 +811,10 @@ for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
     train_label = np.concatenate([one[1], two[1]], axis=1)
     train_mask = np.concatenate([one[2], two[2]], axis=1)
     val_volume, val_label, val_mask = data_list[val_data[0]]
+
+    calculate_all_MAD(train_volume)
+    calculate_all_median(train_volume)
+    calculate_possibles(all_median, all_MAD)
 
     train_locations_ds = generate_locations_ds(train_volume, train_mask)
     val_location_ds = generate_locations_ds(val_volume, val_mask)
