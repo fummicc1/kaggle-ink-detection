@@ -13,5 +13,5 @@ wandb
 test/
 train/
 *.keras
-lightning_logs
+lightning_logs*
 weights

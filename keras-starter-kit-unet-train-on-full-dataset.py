@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[ ]:
+# In[26]:
 
 
 import numpy as np
@@ -19,6 +19,7 @@ import segmentation_models_pytorch as smp
 import pytorch_lightning as pl
 
 import ssl
+
 ssl._create_default_https_context = ssl._create_unverified_context
 
 import glob
@@ -39,28 +40,31 @@ import torch.utils.data
 
 # Data config
 # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
-DATA_DIR = '/home/fummicc1/codes/competitions/kaggle-ink-detection'
-BUFFER = 128  # Half-size of papyrus patches we'll use as model inputs
-Z_LIST = list(range(0, 65, 4))  # Offset of slices in the z direction
+DATA_DIR = "/home/fummicc1/codes/competitions/kaggle-ink-detection"
+BUFFER = 96  # Half-size of papyrus patches we'll use as model inputs
+Z_LIST = list(range(0, 55, 3))  # Offset of slices in the z direction
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
 SHARED_LENGTH = 4000  # Max length(width or height) to resize all papyrii
 
 # Model config
 BATCH_SIZE = 64
 
+backbone = "se_resnext50_32x4d"
+# backbone = "resnet50"
+
 device = torch.device("cuda")
 threshold = 0.5
-num_workers = 4
+num_workers = 8
 exp = 1e-7
 
-num_epochs = 120
-lr = 1e-4
+num_epochs = 20
+lr = 5e-4
 
 pytorch_lightning.seed_everything(seed=42)
-torch.set_float32_matmul_precision('high')
+torch.set_float32_matmul_precision("high")
 
 
-# In[ ]:
+# In[27]:
 
 
 # plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
@@ -72,27 +76,28 @@ plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
 
 # ## Load up the training data
 
-# In[ ]:
+# In[28]:
 
 
 def resize(img):
-    current_height, current_width = img.shape    
+    current_height, current_width = img.shape
     aspect_ratio = current_width / current_height
     if current_height > current_width:
         new_height = SHARED_LENGTH
         new_width = int(SHARED_LENGTH * aspect_ratio)
     else:
         new_width = SHARED_LENGTH
-        new_height = int(SHARED_LENGTH / aspect_ratio)        
-        
+        new_height = int(SHARED_LENGTH / aspect_ratio)
+
     new_size = (new_width, new_height)
     # (W, H)の順で渡すが結果は(H, W)になっている
     img = cv2.resize(img, new_size)
     return img
 
+
 def load_mask(split, index):
     img = cv2.imread(f"{DATA_DIR}/{split}/{index}/mask.png", 0) // 255
-    img = resize(img)    
+    img = resize(img)
     return img
 
 
@@ -107,13 +112,13 @@ labels = load_labels(split="train", index=1)
 
 fig, (ax1, ax2) = plt.subplots(1, 2)
 ax1.set_title("mask.png")
-ax1.imshow(mask, cmap='gray')
+ax1.imshow(mask, cmap="gray")
 ax2.set_title("inklabels.png")
-ax2.imshow(labels, cmap='gray')
+ax2.imshow(labels, cmap="gray")
 plt.show()
 
 
-# In[ ]:
+# In[29]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -141,24 +146,24 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[ ]:
+# In[30]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
 
 ax1.set_title("labels_train_1")
-ax1.imshow(labels_train_1, cmap='gray')
+ax1.imshow(labels_train_1, cmap="gray")
 
 ax2.set_title("labels_train_2")
-ax2.imshow(labels_train_2, cmap='gray')
+ax2.imshow(labels_train_2, cmap="gray")
 
 ax3.set_title("labels_train_3")
-ax3.imshow(labels_train_3, cmap='gray')
+ax3.imshow(labels_train_3, cmap="gray")
 plt.tight_layout()
 plt.show()
 
 
-# In[ ]:
+# In[31]:
 
 
 def load_volume(split, index):
@@ -167,15 +172,15 @@ def load_volume(split, index):
     z_slices_fnames = [all[i] for i in range(len(all)) if i in Z_LIST]
     assert len(z_slices_fnames) == Z_DIM
     z_slices = []
-    for z, filename in  tqdm(enumerate(z_slices_fnames)):
+    for z, filename in tqdm(enumerate(z_slices_fnames)):
         img = cv2.imread(filename, -1)
         img = resize(img)
-        img = (img / (2 ** 8)).astype(np.uint8)
+        img = (img / (2**8)).astype(np.uint8)
         z_slices.append(img)
     return np.stack(z_slices, axis=-1)
 
 
-# In[ ]:
+# In[32]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -187,195 +192,151 @@ print(f"volume_train_2: {volume_train_2.shape}, {volume_train_2.dtype}")
 volume_train_3 = load_volume(split="train", index=3)
 print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 
-volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1)
-print(f"total volume: {volume.shape}")
+# volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1)
+# volume = np.concatenate([volume_train_1, volume_train_2], axis=1)
+# print(f"total volume: {volume.shape}")
 
 
-# In[ ]:
+# In[33]:
 
 
-del volume_train_1
-del volume_train_2
-del volume_train_3
+# # labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
+# labels = np.concatenate([labels_train_1, labels_train_2], axis=1)
+# print(f"labels: {labels.shape}, {labels.dtype}")
+# # mask = np.concatenate([mask_train_1, mask_train_2, mask_train_3], axis=1)
+# mask = np.concatenate([mask_train_1, mask_train_2], axis=1)
+# print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[ ]:
+# In[34]:
 
 
-labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
-print(f"labels: {labels.shape}, {labels.dtype}")
-mask = np.concatenate([mask_train_1, mask_train_2, mask_train_3], axis=1)
-print(f"mask: {mask.shape}, {mask.dtype}")
-
-
-# In[ ]:
-
-
-# Free up memory
-del labels_train_1
-del labels_train_2
-del labels_train_3
-del mask_train_1
-del mask_train_2
-del mask_train_3
+# # Free up memory
+# del labels_train_1
+# del labels_train_2
+# del labels_train_3
+# del mask_train_1
+# del mask_train_2
+# del mask_train_3
 
 
 # ## Visualize the training data
-# 
+#
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[ ]:
+# In[35]:
 
 
-fig, axes = plt.subplots(1, 2, figsize=(15, 3))
-for z, ax in enumerate(axes):
-    ax.imshow(volume[:, :, z], cmap='gray')
-    ax.set_xticks([]); ax.set_yticks([])
-fig.tight_layout()
-plt.show()
+# fig, axes = plt.subplots(1, 2, figsize=(15, 3))
+# for z, ax in enumerate(axes):
+#     ax.imshow(volume[:, :, z], cmap='gray')
+#     ax.set_xticks([]); ax.set_yticks([])
+# fig.tight_layout()
+# plt.show()
 
 
 # ## Create a dataset in the input volume
-# 
+#
 
-# In[ ]:
+# In[36]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[ ]:
+# In[37]:
 
 
-volume.shape
+def generate_locations_ds(volume, mask):
+    is_in_mask_train = lambda x: is_in_masked_zone(x, mask)
 
+    # Create a list to store train locations
+    locations = []
 
-# In[ ]:
+    # Generate train locations
+    volume_height, volume_width = volume.shape[:-1]
 
+    for y in range(BUFFER, volume_height - BUFFER, BUFFER // 2):
+        for x in range(BUFFER, volume_width - BUFFER, BUFFER // 2):
+            if is_in_mask_train((y, x)):
+                locations.append((y, x))
 
-mask.shape
-
-
-# In[ ]:
-
-
-is_in_mask_train = lambda x: is_in_masked_zone(x, mask)
-
-# Create a list to store train locations
-locations = []
-
-# Generate train locations
-volume_height,volume_width = volume.shape[:-1]
-
-for y in range(BUFFER, volume_height - BUFFER, BUFFER // 3):
-    for x in range(BUFFER, volume_width - BUFFER, BUFFER // 3):
-        if is_in_mask_train((y, x)):
-            locations.append((y, x))
-
-# Convert the list of train locations to a PyTorch tensor
-locations_ds = np.stack(locations, axis=0)
-
-
-# In[ ]:
-
-
-locations_ds.shape
+    # Convert the list of train locations to a PyTorch tensor
+    locations_ds = np.stack(locations, axis=0)
+    return locations_ds
 
 
 # ## Visualize some training patches
-# 
+#
 # Sanity check visually that our patches are where they should be.
 
-# In[ ]:
+# In[38]:
 
 
-fig, ax = plt.subplots()
-ax.imshow(labels)
-
-for y, x in locations_ds:
-    patch = Rectangle([x - BUFFER, y - BUFFER], 2 * BUFFER, 2 * BUFFER, linewidth=2, edgecolor='r', facecolor='none')
-    ax.add_patch(patch)
-
-plt.show()
+possible_min_input = possible_max_input = all_median = all_MAD = None
 
 
-# In[ ]:
+# In[39]:
 
 
 from scipy.stats import median_abs_deviation
-all_MAD = median_abs_deviation(volume, axis=[0, 1])
 
 
-# In[ ]:
+def calculate_all_MAD(volume):
+    global all_MAD
+    all_MAD = median_abs_deviation(volume, axis=[0, 1])
+    print("all_MAD", all_MAD)
 
 
-all_median = np.median(volume, axis=[0, 1])
+# In[40]:
 
 
-# In[ ]:
+def calculate_all_median(volume):
+    global all_median
+    all_median = np.median(volume, axis=[0, 1])
+    print("all_median", all_median)
 
 
-mean = np.mean(volume)
+# In[41]:
 
 
-# In[ ]:
+def calculate_possibles(all_median, all_MAD):
+    global possible_max_input, possible_min_input
+    # possible_max_input = ((2 ** 8 - 1) - all_median.min()) / all_MAD.min()
+    # possible_min_input = ((0) - all_median.min()) / all_MAD.min()
+    possible_max_input = (2**8 - 1) / all_median.min()
+    possible_min_input = 0 / (all_median.min() + exp)
 
 
-mean
-
-
-# In[ ]:
-
-
-std = np.std(volume)
-
-
-# In[ ]:
-
-
-std
-
-
-# In[ ]:
-
-
-possible_max_input = ((2 ** 8 - 1) - all_median.min()) / all_MAD.min()
-possible_max_input
-
-
-# In[ ]:
-
-
-possible_min_input = ((0) - all_median.min()) / all_MAD.min()
-possible_min_input
-
-
-# In[ ]:
+# In[42]:
 
 
 print("all_median", all_median)
 "all_median", all_median
 
 
-# In[ ]:
+# In[43]:
 
 
 print("all_MAD", all_MAD)
 "all_MAD", all_MAD
 
 
-# In[ ]:
+# In[44]:
 
 
 printed = True
+
 
 def extract_subvolume(location, volume):
     global printed
     # print(np.unique(volume, return_counts=True, return_index=True))
     x = location[0]
     y = location[1]
-    subvolume = volume[x-BUFFER:x+BUFFER, y-BUFFER:y+BUFFER, :].astype(np.float32)
+    subvolume = volume[x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :].astype(
+        np.float32
+    )
     # print("subvolume[:, :, 0]", subvolume[:, :, 0])
     median = np.full_like(subvolume, all_median).astype(np.float32)
     MAD = np.full_like(subvolume, all_MAD).astype(np.float32)
@@ -385,30 +346,51 @@ def extract_subvolume(location, volume):
     # print("MAD", MAD[0, 0, :])
     # print("mean", mean)
     # print("median", median[0, 0, :])
-    
-    subvolume = (subvolume - median) / MAD
-    
+
+    # subvolume = (subvolume - median) / MAD
+    subvolume = subvolume / median
+
     if not printed:
         print("subvolume after taking care of median and MAD", subvolume)
         printed = True
-    
+
     return subvolume
 
 
 # ## SubvolumeDataset
 
-# In[ ]:
+# In[45]:
 
 
 import torch
 from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import OneHotEncoder
 
+from albumentations.core.transforms_interface import ImageOnlyTransform
+
+
+class MedianImageValue(ImageOnlyTransform):
+    def __init__(self, always_apply=False, p=1.0):
+        super(MedianImageValue, self).__init__(always_apply, p)
+
+    def apply(self, img, **params):
+        median = np.full_like(img, all_median).astype(np.float32)
+        return img / median
+
+
 class SubvolumeDataset(Dataset):
-    def __init__(self, locations, volume, labels, buffer, is_train: bool, return_location: bool = False):
+    def __init__(
+        self,
+        locations,
+        volume,
+        labels,
+        buffer,
+        is_train: bool,
+        return_location: bool = False,
+    ):
         self.locations = locations
         self.volume = volume
-        self.labels = labels        
+        self.labels = labels
         self.buffer = buffer
         self.is_train = is_train
         self.return_location = return_location
@@ -417,111 +399,150 @@ class SubvolumeDataset(Dataset):
         return len(self.locations)
 
     def __getitem__(self, idx):
+        global possible_min_input, possible_max_input
         label = None
         location = np.array(self.locations[idx])
         y, x = location[0], location[1]
 
-        subvolume = extract_subvolume(location, self.volume) - possible_min_input  
+        subvolume = extract_subvolume(location, self.volume)
         # print("subvolume", subvolume)
         # print("labels", labels)
         # subvolume = subvolume.numpy()
         subvolume = subvolume
-        
+
         if self.labels is not None:
-            label = self.labels[y - self.buffer:y + self.buffer, x - self.buffer:x + self.buffer]
+            label = self.labels[
+                y - self.buffer : y + self.buffer, x - self.buffer : x + self.buffer
+            ]
             # print("label", label)
             # n_category = 2
             # label = np.eye(n_category)[label]
             label = np.stack([label], axis=-1)
             # label = label.numpy()
             # print("label.shape", label.shape
-        
-        if self.is_train and label is not None:            
-            
+
+        if self.is_train and label is not None:
             # print("label", label.dtype)
-            # print("subvolume in dataset (before aug)", subvolume)    
+            # print("subvolume in dataset (before aug)", subvolume)
             size = int(BUFFER * 2)
-            performed = A.Compose([
-                A.ToFloat(max_value=possible_max_input - possible_min_input),                
-                A.HorizontalFlip(p=0.5), # 水平方向に反転
-                A.VerticalFlip(p=0.5), # 水平方向に反転
-                A.RandomBrightnessContrast(p=0.4),
-                A.ShiftScaleRotate(p=0.8, border_mode=0), # シフト、スケーリング、回転
-                # A.PadIfNeeded(min_height=size, min_width=size, always_apply=True, border_mode=0), # 必要に応じてパディングを追加
-                # A.RandomCrop(height=size, width=size, always_apply=True), # ランダムにクロップ, Moduleの中で計算する際に次元がバッチ内で揃っている必要があるので最後にサイズは揃える
-                A.Perspective(p=0.5), # パースペクティブ変換                
-                A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
-                A.CoarseDropout(max_holes=1, max_width=int(size * 0.3), max_height=int(size * 0.3), 
-                                mask_fill_value=0, p=0.5),                
-                A.Resize(BUFFER * 2, BUFFER * 2, always_apply=True),
-                # A.Normalize(
-                #     mean= [0] * Z_DIM,
-                #     std= [1] * Z_DIM
-                # ),
-                # A.FromFloat(max_value=possible_max_input - possible_min_input),
-            ])(image=subvolume, mask=label)            
-            subvolume = performed["image"]            
+            performed = A.Compose(
+                [
+                    # A.ToFloat(max_value=possible_max_input - possible_min_input),
+                    A.HorizontalFlip(p=0.5),  # 水平方向に反転
+                    A.VerticalFlip(p=0.5),  # 水平方向に反転
+                    A.RandomBrightnessContrast(p=0.4),
+                    A.ShiftScaleRotate(p=0.8, border_mode=0),  # シフト、スケーリング、回転
+                    # A.PadIfNeeded(min_height=size, min_width=size, always_apply=True, border_mode=0), # 必要に応じてパディングを追加
+                    # A.RandomCrop(height=size, width=size, always_apply=True), # ランダムにクロップ, Moduleの中で計算する際に次元がバッチ内で揃っている必要があるので最後にサイズは揃える
+                    A.Perspective(p=0.5),  # パースペクティブ変換
+                    A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
+                    A.CoarseDropout(
+                        max_holes=1,
+                        max_width=int(size * 0.3),
+                        max_height=int(size * 0.3),
+                        mask_fill_value=0,
+                        p=0.5,
+                    ),
+                    A.Resize(BUFFER * 2, BUFFER * 2, always_apply=True),
+                    # A.Normalize(
+                    #     mean= [0] * Z_DIM,
+                    #     std= [1] * Z_DIM
+                    # ),
+                    # A.FromFloat(max_value=possible_max_input - possible_min_input),
+                    MedianImageValue(always_apply=True),
+                    ToTensorV2(transpose_mask=True),
+                ]
+            )(image=subvolume, mask=label)
+            subvolume = performed["image"]
             label = performed["mask"]
             # print("subvolume in dataset (after aug)", subvolume)
             # print("label", label.dtype)
             # print("subvolume", subvolume.dtype)
             # →C, H, W
-            subvolume = torch.from_numpy(subvolume.transpose(2, 0, 1).astype(np.float32))
+            # subvolume = torch.from_numpy(subvolume.transpose(2, 0, 1).astype(np.float32))
             # print(performed)
             # print(subvolume.shape, label.shape)
             # H, W, C → C, H, W
-            label = torch.from_numpy(label.transpose(2, 0, 1).astype(np.uint8)) 
+            # label = torch.from_numpy(label.transpose(2, 0, 1).astype(np.uint8))
         else:
-            performed = A.Compose([            
-                A.ToFloat(max_value=possible_max_input - possible_min_input),
-                # A.Normalize(
-                #     mean= [0] * Z_DIM,
-                #     std= [1] * Z_DIM
-                # ),
-                # A.FromFloat(max_value=possible_max_input - possible_min_input),
-            ])(image=subvolume)
+            if label is None:
+                performed = A.Compose(
+                    [
+                        # A.ToFloat(max_value=possible_max_input - possible_min_input),
+                        # A.Normalize(
+                        #     mean= [0] * Z_DIM,
+                        #     std= [1] * Z_DIM
+                        # ),
+                        # A.FromFloat(max_value=possible_max_input - possible_min_input),
+                        MedianImageValue(always_apply=True),
+                        ToTensorV2(transpose_mask=True),
+                    ]
+                )(image=subvolume)
+            else:
+                performed = A.Compose(
+                    [
+                        # A.ToFloat(max_value=possible_max_input - possible_min_input),
+                        # A.Normalize(
+                        #     mean= [0] * Z_DIM,
+                        #     std= [1] * Z_DIM
+                        # ),
+                        # A.FromFloat(max_value=possible_max_input - possible_min_input),
+                        MedianImageValue(always_apply=True),
+                        ToTensorV2(transpose_mask=True),
+                    ]
+                )(image=subvolume, mask=label)
+                label = performed["mask"]
             subvolume = performed["image"]
-            subvolume = torch.from_numpy(subvolume.transpose(2, 0, 1).astype(np.float32))
-            if label is not None:
-                label = torch.from_numpy(label.transpose(2, 0, 1).astype(np.uint8)) 
+            # subvolume = torch.from_numpy(subvolume.transpose(2, 0, 1).astype(np.float32))
+            # if label is not None:
+            # label = torch.from_numpy(label.transpose(2, 0, 1).astype(np.uint8))
         if self.return_location:
             return subvolume, location
-        return subvolume, label        
+        return subvolume, label
 
 
 # ## Visualize validation dataset patches
-# 
+#
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[ ]:
+# In[46]:
 
 
-def visualize_valid_dataset_patches(val_locations_ds):
+def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
     fig, ax = plt.subplots()
     ax.imshow(labels)
 
-    for y, x in val_locations_ds:
-        patch = patches.Rectangle([x - BUFFER, y - BUFFER], 2 * BUFFER, 2 * BUFFER, linewidth=2, edgecolor='g', facecolor='none')
+    for y, x in locations_ds:
+        patch = patches.Rectangle(
+            [x - BUFFER, y - BUFFER],
+            2 * BUFFER,
+            2 * BUFFER,
+            linewidth=2,
+            edgecolor="g",
+            facecolor="none",
+        )
         ax.add_patch(patch)
+    plt.savefig(f"fold-{fold}-{mode}.png")
     plt.show()
 
 
 # ## Compute a trivial baseline
-# 
+#
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[ ]:
+# In[47]:
 
 
 def trivial_baseline(dataset):
     total = 0
-    matches = 0.
+    matches = 0.0
     for _, batch_label in tqdm(dataset):
         batch_label = torch.tensor(batch_label)
         matches += torch.sum(batch_label.float())
         total += torch.numel(batch_label)
-    return 1. - matches / total
+    return 1.0 - matches / total
+
 
 # score = trivial_baseline(val_ds).item()
 # print(f"Best validation score achievable trivially: {score * 100:.2f}% accuracy")
@@ -529,20 +550,18 @@ def trivial_baseline(dataset):
 
 # ## Model
 
-# In[ ]:
+# In[48]:
 
 
 class Model(pl.LightningModule):
-    
     training_step_outputs = []
     validation_step_outputs = []
-    test_step_outputs = []
-        
+    test_step_outputs = [[], []]
 
     def __init__(self, encoder_name, in_channels, out_classes, **kwargs):
         super().__init__()
         self.model = smp.UnetPlusPlus(
-            encoder_name=encoder_name, 
+            encoder_name=encoder_name,
             encoder_weights="imagenet",
             # encoder_weights=None,
             encoder_depth=5,
@@ -553,7 +572,7 @@ class Model(pl.LightningModule):
         )
 
         # preprocessing parameteres for image
-        params = smp.encoders.get_preprocessing_params(encoder_name)
+        # params = smp.encoders.get_preprocessing_params(encoder_name)
         # self.register_buffer("std", torch.tensor(params["std"]).view(1, 3, 1, 1))
         # self.register_buffer("mean", torch.tensor(params["mean"]).view(1, 3, 1, 1))
 
@@ -567,20 +586,18 @@ class Model(pl.LightningModule):
         return mask
 
     def shared_step(self, batch, stage):
-        
         subvolumes, labels = batch
-        
+
         image, mask = subvolumes.float(), labels.float()
-        labels = labels.squeeze(dim=1)
         # print("torch.unique(subvolumes)", torch.unique(subvolumes), file=open("subvolumes_unique", "w"))
 
         # Shape of the image should be (batch_size, num_channels, height, width)
         # if you work with grayscale images, expand channels dim to have [batch_size, 1, height, width]
         assert image.ndim == 4
 
-        # Check that image dimensions are divisible by 32, 
-        # encoder and decoder connected by `skip connections` and usually encoder have 5 stages of 
-        # downsampling by factor 2 (2 ^ 5 = 32); e.g. if we have image with shape 65x65 we will have 
+        # Check that image dimensions are divisible by 32,
+        # encoder and decoder connected by `skip connections` and usually encoder have 5 stages of
+        # downsampling by factor 2 (2 ^ 5 = 32); e.g. if we have image with shape 65x65 we will have
         # following shapes of features in encoder and decoder: 84, 42, 21, 10, 5 -> 5, 10, 20, 40, 80
         # and we will get an error trying to concat these features
         h, w = image.shape[2:]
@@ -594,14 +611,17 @@ class Model(pl.LightningModule):
         assert mask.max() <= 1.0 and mask.min() >= 0
 
         logits_mask = self.forward(image)
-        
+
         # Predicted mask contains logits, and loss_fn param `from_logits` is set to True
         loss = self.loss_fn(logits_mask, mask)
 
         # Lets compute metrics for some threshold
-        # first convert mask values to probabilities, then 
+        # first convert mask values to probabilities, then
         # apply thresholding
         prob_mask = logits_mask.sigmoid()
+        if stage == "valid":
+            # print("prob_mask", prob_mask.max().item(), prob_mask.min().item())
+            pass
         pred_mask = (prob_mask > threshold).float()
 
         # We will compute IoU metric by two ways
@@ -610,7 +630,9 @@ class Model(pl.LightningModule):
         # but for now we just compute true positive, false positive, false negative and
         # true negative 'pixels' for each image and class
         # these values will be aggregated in the end of an epoch
-        tp, fp, fn, tn = smp.metrics.get_stats(pred_mask.long(), mask.long(), mode="binary")
+        tp, fp, fn, tn = smp.metrics.get_stats(
+            pred_mask.long(), mask.long(), mode="binary"
+        )
 
         return {
             "loss": loss,
@@ -627,14 +649,16 @@ class Model(pl.LightningModule):
         fn = torch.cat([x["fn"] for x in outputs])
         tn = torch.cat([x["tn"] for x in outputs])
 
-        # per image IoU means that we first calculate IoU score for each image 
+        # per image IoU means that we first calculate IoU score for each image
         # and then compute mean over these scores
-        per_image_iou = smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro-imagewise")
-        
+        per_image_iou = smp.metrics.iou_score(
+            tp, fp, fn, tn, reduction="micro-imagewise"
+        )
+
         # dataset IoU means that we aggregate intersection and union over whole dataset
         # and then compute IoU score. The difference between dataset_iou and per_image_iou scores
-        # in this particular case will not be much, however for dataset 
-        # with "empty" images (images without target class) a large gap could be observed. 
+        # in this particular case will not be much, however for dataset
+        # with "empty" images (images without target class) a large gap could be observed.
         # Empty images influence a lot on per_image_iou and much less on dataset_iou.
         dataset_iou = smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro")
 
@@ -642,7 +666,7 @@ class Model(pl.LightningModule):
             f"{stage}_per_image_iou": per_image_iou,
             f"{stage}_dataset_iou": dataset_iou,
         }
-        
+
         self.log_dict(metrics, prog_bar=True)
 
     def training_step(self, batch, batch_idx):
@@ -657,7 +681,7 @@ class Model(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         out = self.shared_step(batch, "valid")
-        self.validation_step_outputs.append(out)        
+        self.validation_step_outputs.append(out)
         return out
 
     def on_validation_epoch_end(self):
@@ -669,7 +693,7 @@ class Model(pl.LightningModule):
         global predictions_map, predictions_map_counts
 
         patch_batch, loc_batch = batch
-        
+
         loc_batch = loc_batch.long()
         patch_batch = patch_batch.float()
         predictions: torch.Tensor = self.forward(patch_batch)
@@ -680,85 +704,157 @@ class Model(pl.LightningModule):
         # print("predictions.shape after sigmoid", predictions.shape)
         # →(BATCH, W, H, C)
         predictions = torch.permute(predictions, (0, 3, 2, 1))
-        predictions = predictions.cpu().numpy()  # move predictions to cpu and convert to numpy
-        for (y, x), pred in zip(loc_batch, predictions):
-            # print("index: ", index ,"x, y, pred", x.item(), y.item(), pred[BUFFER, BUFFER, :].item(), file=open('log.out', 'a'))
-            print("pred", pred)
-            predictions_map[
-                x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :
-            ] += pred
-            predictions_map_counts[x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :] += 1
-        predictions_map /= (predictions_map_counts + exp)
+        predictions = (
+            predictions.cpu().numpy()
+        )  # move predictions to cpu and convert to numpy
+        loc_batch = loc_batch.cpu().numpy()
         # print("predictions_map", predictions_map)
         # print("predictions_map_count", predictions_map_counts)
-        self.test_step_outputs.append(predictions)
-        return predictions
+        self.test_step_outputs[0].extend(loc_batch)
+        self.test_step_outputs[1].extend(predictions)
+        return loc_batch, predictions
 
     def on_test_epoch_end(self):
-        self.test_step_outputs.clear()
-        return
+        global predictions_map, predictions_map_counts
+        locs = np.array(self.test_step_outputs[0])
+        preds = np.array(self.test_step_outputs[1])
+        print("locs", locs.shape)
+        print("preds", preds.shape)
+        for (y, x), pred in zip(locs, preds):
+            # print("index: ", index ,"x, y, pred", x.item(), y.item(), pred[BUFFER, BUFFER, :].item(), file=open('log.out', 'a'))
+            # print("pred", pred)
+            predictions_map[x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :] += pred
+            predictions_map_counts[
+                x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :
+            ] += 1
+        predictions_map /= predictions_map_counts + exp
+        print("predictions_map", predictions_map.shape)
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=lr)
         # Using a scheduler is optional but can be helpful.
         # The scheduler reduces the LR if the validation performance hasn't improved for the last N epochs
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.2, patience=20, min_lr=5e-5)
-        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "valid_dataset_iou"}
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.2, patience=10, min_lr=5e-5
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": scheduler,
+            "monitor": "valid_dataset_iou",
+        }
 
 
-# In[34]:
+# In[49]:
 
 
-k_folds = 2
-kfold = KFold(
-    n_splits=k_folds,
-    shuffle=True
-)
+class EnsembleModel:
+    def __init__(self, test_loader, test_volume):
+        super().__init__()
+        self.test_loader = test_loader
+        self.test_volume = test_volume
+        self.list = []
+        for fold in [1, 2, 3]:
+            _model = Model.load_from_checkpoint(
+                f"weights/weights_fold-{fold}.ckpt",
+                encoder_name=backbone,
+                in_channels=Z_DIM,
+                out_classes=1,
+            )
+            trainer = pl.Trainer(
+                accelerator="gpu",
+                devices="1",
+                max_epochs=num_epochs,
+            )
 
-# Init the neural network
-model = Model(
-    encoder_name="se_resnext50_32x4d",
-    in_channels=Z_DIM,
-    out_classes=1,
-)
+            self.list.append((_model, trainer))
 
-# Initialize a trainer
-trainer = pl.Trainer(
-    max_epochs=num_epochs,
-    devices="auto",
-    accelerator="auto",
-    log_every_n_steps=BATCH_SIZE // 4,
-)
+    def forward(self):
+        global predictions_map, predictions_map_counts
+        for model, trainer in self.list:
+            model.test_step_outputs = [[], []]
+            # shape: (X, Y, C)
+            predictions_map = (
+                np.zeros_like(self.test_volume[:, :, 0])
+                .transpose((1, 0))[:, :, np.newaxis]
+                .astype(np.float64)
+            )
+            predictions_map_counts = np.zeros_like(predictions_map).astype(np.uint8)
+            model.eval()
+            trainer.test(
+                model=model,
+                dataloaders=self.test_loader,
+                verbose=True,
+            )
 
-for fold, (train_ids, val_ids) in enumerate(kfold.split(locations_ds)):
-    print(f'FOLD {fold}')
-    print('--------------------------------')
-    
+
+# In[50]:
+
+
+k_folds = 3
+kfold = KFold(n_splits=k_folds, shuffle=True)
+data_list = [
+    (volume_train_1, labels_train_1, mask_train_1),
+    (volume_train_2, labels_train_2, mask_train_2),
+    (volume_train_3, labels_train_3, mask_train_3),
+]
+
+all_volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1)
+calculate_all_MAD(all_volume)
+calculate_all_median(all_volume)
+calculate_possibles(all_median, all_MAD)
+
+for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
+    print(f"FOLD {fold}")
+    print("--------------------------------")
+    one = data_list[train_data[0]]
+    two = data_list[train_data[1]]
+    train_volume = np.concatenate([one[0], two[0]], axis=1)
+    train_label = np.concatenate([one[1], two[1]], axis=1)
+    train_mask = np.concatenate([one[2], two[2]], axis=1)
+    val_volume, val_label, val_mask = data_list[val_data[0]]
+
+    train_locations_ds = generate_locations_ds(train_volume, train_mask)
+    val_location_ds = generate_locations_ds(val_volume, val_mask)
+
+    visualize_dataset_patches(train_locations_ds, train_label, "train", fold)
+    visualize_dataset_patches(val_location_ds, val_label, "val", fold)
+
+    # Init the neural network
+    model = Model(
+        encoder_name=backbone,
+        in_channels=Z_DIM,
+        out_classes=1,
+    )
+
+    # Initialize a trainer
+    trainer = pl.Trainer(
+        max_epochs=num_epochs,
+        devices="auto",
+        accelerator="auto",
+        log_every_n_steps=BATCH_SIZE // 4,
+    )
+
     # Sample elements randomly from a given list of ids, no replacement.
     train_ds = SubvolumeDataset(
-        locations_ds[train_ids],
-        volume,
-        labels,
-        BUFFER,
-        is_train=True
+        train_locations_ds, train_volume, train_label, BUFFER, is_train=True
     )
     val_ds = SubvolumeDataset(
-        locations_ds[val_ids],
-        volume,
-        labels,
+        val_location_ds,
+        val_volume,
+        val_label,
         BUFFER,
         is_train=False,
     )
-    
+
     # Define data loaders for training and testing data in this fold
     train_loader = torch.utils.data.DataLoader(
-        train_ds, 
+        train_ds,
         batch_size=BATCH_SIZE,
         num_workers=num_workers,
         shuffle=True,
     )
     val_loader = torch.utils.data.DataLoader(
-        val_ds, 
+        val_ds,
         batch_size=BATCH_SIZE,
         num_workers=num_workers,
         shuffle=False,
@@ -780,6 +876,7 @@ for fold, (train_ids, val_ids) in enumerate(kfold.split(locations_ds)):
 # del val_ds
 
 import gc
+
 gc.collect()
 
 
@@ -798,17 +895,18 @@ import pathlib
 predictions_map = None
 predictions_map_counts = None
 
+
 def compute_predictions_map(split, index):
     global predictions_map
     global predictions_map_counts
-    
+
     print(f"Load data for {split}/{index}")
 
     test_volume = load_volume(split=split, index=index)
-    test_mask = load_mask(split=split, index=index)    
+    test_mask = load_mask(split=split, index=index)
 
     test_locations = []
-    stride = BUFFER // 4
+    stride = BUFFER // 2
     for y in range(BUFFER, test_volume.shape[0] - BUFFER, stride):
         for x in range(BUFFER, test_volume.shape[1] - BUFFER, stride):
             test_locations.append((y, x))
@@ -816,40 +914,29 @@ def compute_predictions_map(split, index):
     print(f"{len(test_locations)} test locations (before filtering by mask)")
 
     # filter locations inside the mask
-    test_locations = [loc for loc in test_locations if is_in_masked_zone(loc, test_mask)]
-    
+    test_locations = [
+        loc for loc in test_locations if is_in_masked_zone(loc, test_mask)
+    ]
+
     print(f"{len(test_locations)} test locations (after filtering by mask)")
 
-    test_ds = SubvolumeDataset(test_locations, test_volume, None, BUFFER, is_train=False, return_location=True)
-    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, num_workers=num_workers)        
+    test_ds = SubvolumeDataset(
+        test_locations, test_volume, None, BUFFER, is_train=False, return_location=True
+    )
+    test_loader = DataLoader(test_ds, batch_size=BATCH_SIZE, num_workers=num_workers)
 
-    # shape: (X, Y, C)
-    predictions_map = np.zeros_like(test_volume[:, :, 0]).transpose((1, 0))[:, :, np.newaxis].astype(np.float64)
-    predictions_map_counts = np.zeros_like(predictions_map).astype(np.uint8)
+    # # shape: (X, Y, C)
+    # predictions_map = np.zeros_like(test_volume[:, :, 0]).transpose((1, 0))[:, :, np.newaxis].astype(np.float64)
+    # predictions_map_counts = np.zeros_like(predictions_map).astype(np.uint8)
 
     # print("test_volume.shape", test_volume.shape)
     # print("predictions_map.shape", predictions_map.shape)
 
     # print(f"Compute predictions")
-    
-    model = Model.load_from_checkpoint(
-        "weights/weights.ckpt",
-        encoder_name="se_resnext50_32x4d",
-        in_channels=Z_DIM,
-        out_classes=1,
-    )
 
-    trainer = pl.Trainer(
-        accelerator="gpu",
-        devices="1",
-        max_epochs=num_epochs,
-    )
+    model = EnsembleModel(test_loader, test_volume)
+    model.forward()
 
-    trainer.test(
-        model=model,
-        dataloaders=test_loader,
-        verbose=True,
-    )
     # print("predictions_map", predictions_map, file=open("predictions_map", "w"))
     return predictions_map
 
@@ -859,9 +946,9 @@ def compute_predictions_map(split, index):
 
 def rle(predictions_map, threshold):
     flat_img = (np.where(predictions_map.flatten() >= threshold, 1, 0)).astype(np.uint8)
-    
+
     # Add padding at the beginning and end
-    flat_img = np.pad(flat_img, pad_width=1, mode='constant', constant_values=0)
+    flat_img = np.pad(flat_img, pad_width=1, mode="constant", constant_values=0)
 
     starts = np.where((flat_img[:-1] == 0) & (flat_img[1:] == 1))[0]
     ends = np.where((flat_img[:-1] == 1) & (flat_img[1:] == 0))[0]
@@ -876,7 +963,7 @@ def rle(predictions_map, threshold):
 
 def update_submission(predictions_map, index):
     rle_ = rle(predictions_map, threshold=threshold)
-    print(f"{index}," + rle_, file=open('submission.csv', 'a'))
+    print(f"{index}," + rle_, file=open("submission.csv", "a"))
     # print(f"{index}," + rle_, file=open('/kaggle/working/submission.csv', 'a'))
 
 
@@ -885,7 +972,7 @@ def update_submission(predictions_map, index):
 # In[ ]:
 
 
-print("Id,Predicted", file=open('submission.csv', 'w'))
+print("Id,Predicted", file=open("submission.csv", "w"))
 kind = "test"
 folder = pathlib.Path(DATA_DIR) / kind
 for p in list(folder.iterdir()):
@@ -893,10 +980,12 @@ for p in list(folder.iterdir()):
     predictions_map = compute_predictions_map(split=kind, index=index)
     original_size = cv2.imread(DATA_DIR + f"/{kind}/{index}/mask.png", 0).shape[:2]
     # W, H, C → H, W, C
-    predictions_map = predictions_map.transpose((1, 0, 2))    
-    predictions_map = resize_ski(predictions_map, (original_size[0], original_size[1], 1)).squeeze(axis=-1)    
-    print("original predictions_map size", predictions_map.shape)    
+    predictions_map = predictions_map.transpose((1, 0, 2))
+    predictions_map = resize_ski(
+        predictions_map, (original_size[0], original_size[1], 1)
+    ).squeeze(axis=-1)
+    print("original predictions_map size", predictions_map.shape)
     # H, W → W, H
     update_submission(predictions_map, index)
+    predictions_map = np.where(predictions_map >= threshold, 1, 0)
     plt.imsave(f"{index}.png", predictions_map, cmap="gray")
-
