@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[203]:
+# In[ ]:
 
 
 import numpy as np
@@ -55,7 +55,7 @@ backbone = "se_resnext50_32x4d"
 # backbone = "resnet50"
 
 device = torch.device("cuda")
-threshold = 0.25
+threshold = 0.5
 num_workers = 8
 exp = 1e-7
 mask_padding = 300
@@ -67,7 +67,7 @@ pytorch_lightning.seed_everything(seed=42)
 torch.set_float32_matmul_precision('high')
 
 
-# In[204]:
+# In[ ]:
 
 
 # plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
@@ -80,12 +80,6 @@ plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
 # ## Load up the training data
 
 # In[ ]:
-
-
-
-
-
-# In[205]:
 
 
 def resize(img):
@@ -118,18 +112,18 @@ def load_labels(split, index):
     return img
 
 
-mask = load_mask(split="train", index=1)
+labels = load_mask(split="train", index=1)
 labels = load_labels(split="train", index=1)
 
 fig, (ax1, ax2) = plt.subplots(1, 2)
 ax1.set_title("mask.png")
-ax1.imshow(mask, cmap='gray')
+ax1.imshow(labels, cmap='gray')
 ax2.set_title("inklabels.png")
 ax2.imshow(labels, cmap='gray')
 plt.show()
 
 
-# In[177]:
+# In[ ]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -157,7 +151,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[178]:
+# In[ ]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -174,7 +168,7 @@ plt.tight_layout()
 plt.show()
 
 
-# In[179]:
+# In[ ]:
 
 
 def load_volume(split, index):
@@ -186,12 +180,13 @@ def load_volume(split, index):
     for z, filename in  tqdm(enumerate(z_slices_fnames)):
         img = cv2.imread(filename, -1)
         img = resize(img)
-        img = (img / (2 ** 8)).astype(np.uint8)
+        # img = (img / (2 ** 8)).astype(np.uint8)
+        img = img.astype(np.float32)
         z_slices.append(img)
     return np.stack(z_slices, axis=-1)
 
 
-# In[180]:
+# In[ ]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -208,7 +203,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"total volume: {volume.shape}")
 
 
-# In[181]:
+# In[ ]:
 
 
 # # labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -219,7 +214,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[182]:
+# In[ ]:
 
 
 # # Free up memory
@@ -235,7 +230,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # 
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[183]:
+# In[ ]:
 
 
 # fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -249,14 +244,14 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # ## Create a dataset in the input volume
 # 
 
-# In[184]:
+# In[ ]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[185]:
+# In[ ]:
 
 
 def generate_locations_ds(volume, mask):
@@ -268,8 +263,8 @@ def generate_locations_ds(volume, mask):
     # Generate train locations
     volume_height, volume_width = volume.shape[:-1]
 
-    for y in range(BUFFER, volume_height - BUFFER, BUFFER // 2):
-        for x in range(BUFFER, volume_width - BUFFER, BUFFER // 2):
+    for y in range(BUFFER, volume_height - BUFFER, BUFFER // 3):
+        for x in range(BUFFER, volume_width - BUFFER, BUFFER // 3):
             if is_in_mask_train((y, x)):
                 locations.append((y, x))
 
@@ -282,13 +277,13 @@ def generate_locations_ds(volume, mask):
 # 
 # Sanity check visually that our patches are where they should be.
 
-# In[186]:
+# In[ ]:
 
 
 possible_min_input = possible_max_input = all_median = all_MAD = None
 
 
-# In[187]:
+# In[ ]:
 
 
 from scipy.stats import median_abs_deviation
@@ -300,7 +295,7 @@ def calculate_all_MAD(volume):
     print("all_MAD", all_MAD)
 
 
-# In[188]:
+# In[ ]:
 
 
 def calculate_all_median(volume):
@@ -309,32 +304,32 @@ def calculate_all_median(volume):
     print("all_median", all_median)
 
 
-# In[189]:
+# In[ ]:
 
 
 def calculate_possibles(all_median, all_MAD):
     global possible_max_input, possible_min_input
     # possible_max_input = ((2 ** 8 - 1) - all_median.min()) / all_MAD.min()
     # possible_min_input = ((0) - all_median.min()) / all_MAD.min()
-    possible_max_input = (2 ** 8 - 1) / all_median.min()
-    possible_min_input = 0 / (all_median.min() + exp)
+    possible_max_input = ((2 ** 8 - 1) - all_median.min()) / all_MAD.min()
+    possible_min_input = 0
 
 
-# In[190]:
+# In[ ]:
 
 
 print("all_median", all_median)
 "all_median", all_median
 
 
-# In[191]:
+# In[ ]:
 
 
 print("all_MAD", all_MAD)
 "all_MAD", all_MAD
 
 
-# In[192]:
+# In[ ]:
 
 
 printed = True
@@ -346,8 +341,8 @@ def extract_subvolume(location, volume):
     y = location[1]
     subvolume = volume[x-BUFFER:x+BUFFER, y-BUFFER:y+BUFFER, :].astype(np.float32)
     # print("subvolume[:, :, 0]", subvolume[:, :, 0])
-    median = np.full_like(subvolume, all_median).astype(np.float32)
-    MAD = np.full_like(subvolume, all_MAD).astype(np.float32)
+    # median = np.full_like(subvolume, all_median).astype(np.float32)
+    # MAD = np.full_like(subvolume, all_MAD).astype(np.float32)
     # mean = np.mean(subvolume, axis=2)
     # mean = np.stack([mean for i in range(Z_DIM)], axis=2) + exp
     # MAD = median_abs_deviation(subvolume, axis=2)
@@ -365,9 +360,24 @@ def extract_subvolume(location, volume):
     return subvolume
 
 
+# In[ ]:
+
+
+data = np.array([[120, 24, 54]])
+out = A.ToFloat(max_value=2**8-1)(image=data)
+out["image"]
+
+
+# In[ ]:
+
+
+out = A.FromFloat(max_value=2**8-1)(image=out["image"])
+out["image"]
+
+
 # ## SubvolumeDataset
 
-# In[193]:
+# In[ ]:
 
 
 import torch
@@ -376,13 +386,16 @@ from sklearn.preprocessing import OneHotEncoder
 
 from albumentations.core.transforms_interface import ImageOnlyTransform
 
-class MedianImageValue(ImageOnlyTransform):
+class NormalizeTransform(ImageOnlyTransform):
     def __init__(self, always_apply=False, p=1.0):
-        super(MedianImageValue, self).__init__(always_apply, p)
+        super(NormalizeTransform, self).__init__(always_apply, p)
 
     def apply(self, img, **params):
         median = np.full_like(img, all_median).astype(np.float32)
-        return img / median
+        mad = np.full_like(img, all_MAD).astype(np.float32)
+        img = (img - median) / mad
+        # img[img < 0] = 0
+        return img
 
 
 class SubvolumeDataset(Dataset):
@@ -421,10 +434,11 @@ class SubvolumeDataset(Dataset):
         if self.is_train and label is not None:            
             
             # print("label", label.dtype)
-            # print("subvolume in data/et (before aug)", subvolume, file=open("before-aug.log", "w")) 
+            # print("subvolume in train dataset (before aug)", subvolume, file=open("before-train-aug.log", "w")) 
             size = int(BUFFER * 2)
             performed = A.Compose([
-                # A.ToFloat(max_value=possible_max_input - possible_min_input),                
+                # A.ToFloat(max_value=possible_max_input - possible_min_input),
+                A.ToFloat(max_value=2**16-1),                
                 A.HorizontalFlip(p=0.5), # 水平方向に反転
                 A.VerticalFlip(p=0.5), # 水平方向に反転
                 A.RandomRotate90(p=0.5),
@@ -444,12 +458,12 @@ class SubvolumeDataset(Dataset):
                 #     std= [1] * Z_DIM
                 # ),
                 # A.FromFloat(max_value=possible_max_input - possible_min_input),
-                MedianImageValue(always_apply=True),
+                NormalizeTransform(always_apply=True),
                 ToTensorV2(transpose_mask=True),                
             ])(image=subvolume, mask=label)            
             subvolume = performed["image"]
             label = performed["mask"]
-            # print("subvolume in dataset (after aug)", subvolume, file=open("after-aug.log", "w"))
+            # print("subvolume in train dataset (after aug)", subvolume, file=open("after-train-aug.log", "w"))
             # print("label", label.dtype)
             # print("subvolume", subvolume.dtype)
             # →C, H, W
@@ -462,27 +476,32 @@ class SubvolumeDataset(Dataset):
             if label is None:
                 performed = A.Compose([            
                     # A.ToFloat(max_value=possible_max_input - possible_min_input),
+                    A.ToFloat(max_value=2**16-1),
                     # A.Normalize(
                     #     mean= [0] * Z_DIM,
                     #     std= [1] * Z_DIM
                     # ),
                     # A.FromFloat(max_value=possible_max_input - possible_min_input),
-                    MedianImageValue(always_apply=True),
+                    NormalizeTransform(always_apply=True),
                     ToTensorV2(transpose_mask=True),
                 ])(image=subvolume)
+                subvolume = performed["image"]
             else:
+                # print("subvolume in val dataset (before aug)", subvolume, file=open("before-val-aug.log", "w")) 
                 performed = A.Compose([            
                     # A.ToFloat(max_value=possible_max_input - possible_min_input),
+                    A.ToFloat(max_value=2**16-1),
                     # A.Normalize(
                     #     mean= [0] * Z_DIM,
                     #     std= [1] * Z_DIM
                     # ),
                     # A.FromFloat(max_value=possible_max_input - possible_min_input),
-                    MedianImageValue(always_apply=True),
+                    NormalizeTransform(always_apply=True),
                     ToTensorV2(transpose_mask=True),
-                ])(image=subvolume, mask=label)
-                label = performed["mask"]
-            subvolume = performed["image"]
+                ])(image=subvolume, mask=label)                
+                label = performed["mask"]                
+                subvolume = performed["image"]
+                # print("subvolume in val dataset (after aug)", subvolume, file=open("after-val-aug.log", "w"))                
             # subvolume = torch.from_numpy(subvolume.transpose(2, 0, 1).astype(np.float32))
             # if label is not None:
                 # label = torch.from_numpy(label.transpose(2, 0, 1).astype(np.uint8)) 
@@ -495,7 +514,7 @@ class SubvolumeDataset(Dataset):
 # 
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[194]:
+# In[ ]:
 
 
 def visualize_dataset_patches(locations_ds, labels, mode: str, fold = 0):
@@ -514,7 +533,7 @@ def visualize_dataset_patches(locations_ds, labels, mode: str, fold = 0):
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[195]:
+# In[ ]:
 
 
 def trivial_baseline(dataset):
@@ -532,7 +551,23 @@ def trivial_baseline(dataset):
 
 # ## Model
 
-# In[198]:
+# In[ ]:
+
+
+def dice_coef_torch(prob_preds, targets, beta=0.5, smooth=1e-5):
+    # No need to binarize the predictions
+    # prob_preds = torch.sigmoid(preds)
+
+    # flatten label and prediction tensors
+    prob_preds = prob_preds.view(-1).float()
+    targets = targets.view(-1).float()
+
+    intersection = (prob_preds * targets).sum()
+
+    dice = ((1 + beta**2) * intersection + smooth) / ((beta**2) * prob_preds.sum() + targets.sum() + smooth)
+
+    return dice
+
 
 
 class Model(pl.LightningModule):
@@ -567,6 +602,8 @@ class Model(pl.LightningModule):
 
         # for image segmentation dice loss could be the best first choice
         self.segmentation_loss_fn = smp.losses.TverskyLoss(smp.losses.BINARY_MODE, from_logits=True)
+        # self.segmentation_loss_fn = smp.losses.DiceLoss(smp.losses.BINARY_MODE, log_loss=True, from_logits=True)
+        # self.segmentation_loss_fn = dice_coef_torch
         # self.classification_loss_fn = smp.losses.SoftCrossEntropyLoss()
 
     def forward(self, image):
@@ -579,7 +616,7 @@ class Model(pl.LightningModule):
         
         subvolumes, labels = batch
         
-        image, mask = subvolumes.float(), labels.float()
+        image, labels = subvolumes.float(), labels.float()
         # print("torch.unique(subvolumes)", torch.unique(subvolumes), file=open("subvolumes_unique", "w"))
 
         # Shape of the image should be (batch_size, num_channels, height, width)
@@ -596,23 +633,21 @@ class Model(pl.LightningModule):
 
         # Shape of the mask should be [batch_size, num_classes, height, width]
         # for binary segmentation num_classes = 1
-        assert mask.ndim == 4
+        assert labels.ndim == 4
 
         # Check that mask values in between 0 and 1, NOT 0 and 255 for binary segmentation
-        assert mask.max() <= 1.0 and mask.min() >= 0
+        assert labels.max() <= 1.0 and labels.min() >= 0
 
         segmentation_out = self.forward(image)
+        segmentation_out = segmentation_out.sigmoid()
         
         # Predicted mask contains logits, and loss_fn param `from_logits` is set to True
-        loss = self.segmentation_loss_fn(segmentation_out, mask)
+        loss = self.segmentation_loss_fn(segmentation_out, labels)
 
         # Lets compute metrics for some threshold
         # first convert mask values to probabilities, then 
         # apply thresholding
-        prob_mask = segmentation_out.sigmoid()
-        if stage == "valid":
-            # print("prob_mask", prob_mask.max().item(), prob_mask.min().item())
-            pass
+        prob_mask = segmentation_out 
         pred_mask = (prob_mask > threshold).float()
 
         # We will compute IoU metric by two ways
@@ -621,7 +656,7 @@ class Model(pl.LightningModule):
         # but for now we just compute true positive, false positive, false negative and
         # true negative 'pixels' for each image and class
         # these values will be aggregated in the end of an epoch
-        tp, fp, fn, tn = smp.metrics.get_stats(pred_mask.long(), mask.long(), mode="binary")
+        tp, fp, fn, tn = smp.metrics.get_stats(pred_mask.long(), labels.long(), mode="binary")
 
         return {
             "loss": loss,
@@ -739,7 +774,7 @@ class Model(pl.LightningModule):
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "valid_dataset_iou"}
 
 
-# In[199]:
+# In[26]:
 
 
 k_folds = 3
