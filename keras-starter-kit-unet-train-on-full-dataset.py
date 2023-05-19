@@ -801,26 +801,26 @@ all_median = np.array(
     ]
 )
 
-sample_locations = generate_locations_ds(volume_train_1, mask_train_1)
-sample_ds = SubvolumeDataset(
-    sample_locations,
-    volume_train_1,
-    labels_train_1,
-    BUFFER,
-    is_train=False,
-)
+# sample_locations = generate_locations_ds(volume_train_1, mask_train_1)
+# sample_ds = SubvolumeDataset(
+#     sample_locations,
+#     volume_train_1,
+#     labels_train_1,
+#     BUFFER,
+#     is_train=False,
+# )
 
 
-fig, ax = plt.subplots(Z_DIM // 2, 2, figsize=(12, 12))
-# Assuming `data` is your (12, 244, 244) array
-for i in range(Z_DIM):
-    data = sample_ds[0][0][i]
-    ax[i // 2][i % 2].hist(
-        data.flatten(), bins=100
-    )  # Plot histogram of the flattened data
-    ax[i // 2][i % 2].set_title(f"Histogram of Channel {i}")  # Add title to the plot
-fig.tight_layout()
-fig.show()  # Display all figures
+# fig, ax = plt.subplots(Z_DIM // 2, 2, figsize=(12, 12))
+# # Assuming `data` is your (12, 244, 244) array
+# for i in range(Z_DIM):
+#     data = sample_ds[0][0][i]
+#     ax[i // 2][i % 2].hist(
+#         data.flatten(), bins=100
+#     )  # Plot histogram of the flattened data
+#     ax[i // 2][i % 2].set_title(f"Histogram of Channel {i}")  # Add title to the plot
+# fig.tight_layout()
+# fig.show()  # Display all figures
 
 
 # ## Model
