@@ -48,8 +48,8 @@ import torch.utils.data
 # Data config
 # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
 DATA_DIR = "/home/fummicc1/codes/competitions/kaggle-ink-detection"
-BUFFER = 128  # Half-size of papyrus patches we'll use as model inputs
-Z_LIST = list(range(6, 48, 2))  # Offset of slices in the z direction
+BUFFER = 160  # Half-size of papyrus patches we'll use as model inputs
+Z_LIST = list(range(0, 65, 4))  # Offset of slices in the z direction
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
 SHARED_HEIGHT = 4000  # Max height to resize all papyrii
 
@@ -786,7 +786,7 @@ fig, ax = plt.subplots(Z_DIM // 2 + 1, 2, figsize=(12, 12))
 for i in range(Z_DIM):
     data = sample_ds[0][0][i]
     ax[i // 2][i % 2].hist(
-        data.flatten(), bins=100
+        data.flatten(), bins=255
     )  # Plot histogram of the flattened data
     ax[i // 2][i % 2].set_title(f"Histogram of Channel {i}")  # Add title to the plot
 fig.tight_layout()
@@ -863,16 +863,19 @@ class Model(pl.LightningModule):
         # self.register_buffer("mean", torch.tensor(params["mean"]).view(1, 3, 1, 1))
 
         # for image segmentation dice loss could be the best first choice
-        # self.segmentation_loss_fn = smp.losses.TverskyLoss(
+        self.segmentation_loss_fn = smp.losses.TverskyLoss(
+            smp.losses.BINARY_MODE,
+            log_loss=False,
+            from_logits=True,
+            smooth=1e-6,
+        )
+        # smp.losses.FocalLoss()
+        # self.segmentation_loss_fn = smp.losses.DiceLoss(
         #     smp.losses.BINARY_MODE,
         #     log_loss=False,
         #     from_logits=True,
-        #     smooth=1e-6,
+        #     smooth=1e-6
         # )
-        # smp.losses.FocalLoss()
-        self.segmentation_loss_fn = smp.losses.DiceLoss(
-            smp.losses.BINARY_MODE, log_loss=False, from_logits=True, smooth=1e-6
-        )
         # self.segmentation_loss_fn = dice_coef_torch
         # self.classification_loss_fn = smp.losses.SoftCrossEntropyLoss()
 
