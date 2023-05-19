@@ -5,25 +5,14 @@
 
 # ## Setup
 
-# In[8]:
-
-
-import torch
-
-
-# In[9]:
-
-
-torch.cuda.device_count()
-
-
-# In[10]:
+# In[ ]:
 
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torchvision
+import cupy
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 import pytorch_lightning
@@ -58,15 +47,14 @@ import torch.utils.data
 
 # Data config
 # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
-# DATA_DIR = '/home/fummicc1/codes/competitions/kaggle-ink-detection'
-DATA_DIR = "/home/fummicc1/codes/Kaggle/kaggle-ink-detection"
-BUFFER = 112  # Half-size of papyrus patches we'll use as model inputs
-Z_LIST = list(range(4, 52, 4))  # Offset of slices in the z direction
+DATA_DIR = "/home/fummicc1/codes/competitions/kaggle-ink-detection"
+BUFFER = 160  # Half-size of papyrus patches we'll use as model inputs
+Z_LIST = list(range(0, 65, 4))  # Offset of slices in the z direction
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
 SHARED_HEIGHT = 4000  # Max height to resize all papyrii
 
 # Model config
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 
 # backbone = "mit_b1"
 # backbone = "efficientnet-b5"
@@ -80,14 +68,14 @@ num_workers = 8
 exp = 1e-7
 mask_padding = 200
 
-num_epochs = 50
+num_epochs = 30
 lr = 1e-3
 
 pytorch_lightning.seed_everything(seed=42)
 torch.set_float32_matmul_precision("high")
 
 
-# In[11]:
+# In[ ]:
 
 
 # plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
@@ -99,139 +87,156 @@ plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
 
 # ## Load up the training data
 
-# In[12]:
+# In[ ]:
 
 
-# import cupy as cp
-# xp = cp
+import cupy as cp
 
-# delta_lookup = {
-#     "xx": xp.array([[1, -2, 1]], dtype=float),
-#     "yy": xp.array([[1], [-2], [1]], dtype=float),
-#     "xy": xp.array([[1, -1], [-1, 1]], dtype=float),
-# }
+xp = cp
 
-# def operate_derivative(img_shape, pair):
-#     assert len(img_shape) == 2
-#     delta = delta_lookup[pair]
-#     fft = xp.fft.fftn(delta, img_shape)
-#     return fft * xp.conj(fft)
-
-# def soft_threshold(vector, threshold):
-#     return xp.sign(vector) * xp.maximum(xp.abs(vector) - threshold, 0)
-
-# def back_diff(input_image, dim):
-#     assert dim in (0, 1)
-#     r, n = xp.shape(input_image)
-#     size = xp.array((r, n))
-#     position = xp.zeros(2, dtype=int)
-#     temp1 = xp.zeros((r+1, n+1), dtype=float)
-#     temp2 = xp.zeros((r+1, n+1), dtype=float)
-
-#     temp1[position[0]:size[0], position[1]:size[1]] = input_image
-#     temp2[position[0]:size[0], position[1]:size[1]] = input_image
-
-#     size[dim] += 1
-#     position[dim] += 1
-#     temp2[position[0]:size[0], position[1]:size[1]] = input_image
-#     temp1 -= temp2
-#     size[dim] -= 1
-#     return temp1[0:size[0], 0:size[1]]
-
-# def forward_diff(input_image, dim):
-#     assert dim in (0, 1)
-#     r, n = xp.shape(input_image)
-#     size = xp.array((r, n))
-#     position = xp.zeros(2, dtype=int)
-#     temp1 = xp.zeros((r+1, n+1), dtype=float)
-#     temp2 = xp.zeros((r+1, n+1), dtype=float)
-
-#     size[dim] += 1
-#     position[dim] += 1
-
-#     temp1[position[0]:size[0], position[1]:size[1]] = input_image
-#     temp2[position[0]:size[0], position[1]:size[1]] = input_image
-
-#     size[dim] -= 1
-#     temp2[0:size[0], 0:size[1]] = input_image
-#     temp1 -= temp2
-#     size[dim] += 1
-#     return -temp1[position[0]:size[0], position[1]:size[1]]
-
-# def iter_deriv(input_image, b, scale, mu, dim1, dim2):
-#     g = back_diff(forward_diff(input_image, dim1), dim2)
-#     d = soft_threshold(g + b, 1 / mu)
-#     b = b + (g - d)
-#     L = scale * back_diff(forward_diff(d - b, dim2), dim1)
-#     return L, b
-
-# def iter_xx(*args):
-#     return iter_deriv(*args, dim1=1, dim2=1)
-
-# def iter_yy(*args):
-#     return iter_deriv(*args, dim1=0, dim2=0)
-
-# def iter_xy(*args):
-#     return iter_deriv(*args, dim1=0, dim2=1)
-
-# def iter_sparse(input_image, bsparse, scale, mu):
-#     d = soft_threshold(input_image + bsparse, 1 / mu)
-#     bsparse = bsparse + (input_image - d)
-#     Lsparse = scale * (d - bsparse)
-#     return Lsparse, bsparse
+delta_lookup = {
+    "xx": xp.array([[1, -2, 1]], dtype=float),
+    "yy": xp.array([[1], [-2], [1]], dtype=float),
+    "xy": xp.array([[1, -1], [-1, 1]], dtype=float),
+}
 
 
-# def denoise_image(input_image, iter_num=100, fidelity=150, sparsity_scale=10, continuity_scale=0.5, mu=1):
-#     image_size = xp.shape(input_image)
-#     #print("Initialize denoising")
-#     norm_array = (
-#         operate_derivative(image_size, "xx") +
-#         operate_derivative(image_size, "yy") +
-#         2 * operate_derivative(image_size, "xy")
-#     )
-#     norm_array += (fidelity / mu) + sparsity_scale ** 2
-#     b_arrays = {
-#         "xx": xp.zeros(image_size, dtype=float),
-#         "yy": xp.zeros(image_size, dtype=float),
-#         "xy": xp.zeros(image_size, dtype=float),
-#         "L1": xp.zeros(image_size, dtype=float),
-#     }
-#     g_update = xp.multiply(fidelity / mu, input_image)
-#     for i in tqdm(range(iter_num), total=iter_num):
-#         #print(f"Starting iteration {i+1}")
-#         g_update = xp.fft.fftn(g_update)
-#         if i == 0:
-#             g = xp.fft.ifftn(g_update / (fidelity / mu)).real
-#         else:
-#             g = xp.fft.ifftn(xp.divide(g_update, norm_array)).real
-#         g_update = xp.multiply((fidelity / mu), input_image)
-
-#         #print("XX update")
-#         L, b_arrays["xx"] = iter_xx(g, b_arrays["xx"], continuity_scale, mu)
-#         g_update += L
-
-#         #print("YY update")
-#         L, b_arrays["yy"] = iter_yy(g, b_arrays["yy"], continuity_scale, mu)
-#         g_update += L
-
-#         #print("XY update")
-#         L, b_arrays["xy"] = iter_xy(g, b_arrays["xy"], 2 * continuity_scale, mu)
-#         g_update += L
-
-#         #print("L1 update")
-#         L, b_arrays["L1"] = iter_sparse(g, b_arrays["L1"], sparsity_scale, mu)
-#         g_update += L
-
-#     g_update = xp.fft.fftn(g_update)
-#     g = xp.fft.ifftn(xp.divide(g_update, norm_array)).real
-
-#     g[g < 0] = 0
-#     g -= g.min()
-#     g /= g.max()
-#     return g
+def operate_derivative(img_shape, pair):
+    assert len(img_shape) == 2
+    delta = delta_lookup[pair]
+    fft = xp.fft.fftn(delta, img_shape)
+    return fft * xp.conj(fft)
 
 
-# In[13]:
+def soft_threshold(vector, threshold):
+    return xp.sign(vector) * xp.maximum(xp.abs(vector) - threshold, 0)
+
+
+def back_diff(input_image, dim):
+    assert dim in (0, 1)
+    r, n = xp.shape(input_image)
+    size = xp.array((r, n))
+    position = xp.zeros(2, dtype=int)
+    temp1 = xp.zeros((r + 1, n + 1), dtype=float)
+    temp2 = xp.zeros((r + 1, n + 1), dtype=float)
+
+    temp1[position[0] : size[0], position[1] : size[1]] = input_image
+    temp2[position[0] : size[0], position[1] : size[1]] = input_image
+
+    size[dim] += 1
+    position[dim] += 1
+    temp2[position[0] : size[0], position[1] : size[1]] = input_image
+    temp1 -= temp2
+    size[dim] -= 1
+    return temp1[0 : size[0], 0 : size[1]]
+
+
+def forward_diff(input_image, dim):
+    assert dim in (0, 1)
+    r, n = xp.shape(input_image)
+    size = xp.array((r, n))
+    position = xp.zeros(2, dtype=int)
+    temp1 = xp.zeros((r + 1, n + 1), dtype=float)
+    temp2 = xp.zeros((r + 1, n + 1), dtype=float)
+
+    size[dim] += 1
+    position[dim] += 1
+
+    temp1[position[0] : size[0], position[1] : size[1]] = input_image
+    temp2[position[0] : size[0], position[1] : size[1]] = input_image
+
+    size[dim] -= 1
+    temp2[0 : size[0], 0 : size[1]] = input_image
+    temp1 -= temp2
+    size[dim] += 1
+    return -temp1[position[0] : size[0], position[1] : size[1]]
+
+
+def iter_deriv(input_image, b, scale, mu, dim1, dim2):
+    g = back_diff(forward_diff(input_image, dim1), dim2)
+    d = soft_threshold(g + b, 1 / mu)
+    b = b + (g - d)
+    L = scale * back_diff(forward_diff(d - b, dim2), dim1)
+    return L, b
+
+
+def iter_xx(*args):
+    return iter_deriv(*args, dim1=1, dim2=1)
+
+
+def iter_yy(*args):
+    return iter_deriv(*args, dim1=0, dim2=0)
+
+
+def iter_xy(*args):
+    return iter_deriv(*args, dim1=0, dim2=1)
+
+
+def iter_sparse(input_image, bsparse, scale, mu):
+    d = soft_threshold(input_image + bsparse, 1 / mu)
+    bsparse = bsparse + (input_image - d)
+    Lsparse = scale * (d - bsparse)
+    return Lsparse, bsparse
+
+
+def denoise_image(
+    input_image,
+    iter_num=100,
+    fidelity=150,
+    sparsity_scale=10,
+    continuity_scale=0.5,
+    mu=1,
+):
+    image_size = xp.shape(input_image)
+    # print("Initialize denoising")
+    norm_array = (
+        operate_derivative(image_size, "xx")
+        + operate_derivative(image_size, "yy")
+        + 2 * operate_derivative(image_size, "xy")
+    )
+    norm_array += (fidelity / mu) + sparsity_scale**2
+    b_arrays = {
+        "xx": xp.zeros(image_size, dtype=float),
+        "yy": xp.zeros(image_size, dtype=float),
+        "xy": xp.zeros(image_size, dtype=float),
+        "L1": xp.zeros(image_size, dtype=float),
+    }
+    g_update = xp.multiply(fidelity / mu, input_image)
+    for i in tqdm(range(iter_num), total=iter_num):
+        # print(f"Starting iteration {i+1}")
+        g_update = xp.fft.fftn(g_update)
+        if i == 0:
+            g = xp.fft.ifftn(g_update / (fidelity / mu)).real
+        else:
+            g = xp.fft.ifftn(xp.divide(g_update, norm_array)).real
+        g_update = xp.multiply((fidelity / mu), input_image)
+
+        # print("XX update")
+        L, b_arrays["xx"] = iter_xx(g, b_arrays["xx"], continuity_scale, mu)
+        g_update += L
+
+        # print("YY update")
+        L, b_arrays["yy"] = iter_yy(g, b_arrays["yy"], continuity_scale, mu)
+        g_update += L
+
+        # print("XY update")
+        L, b_arrays["xy"] = iter_xy(g, b_arrays["xy"], 2 * continuity_scale, mu)
+        g_update += L
+
+        # print("L1 update")
+        L, b_arrays["L1"] = iter_sparse(g, b_arrays["L1"], sparsity_scale, mu)
+        g_update += L
+
+    g_update = xp.fft.fftn(g_update)
+    g = xp.fft.ifftn(xp.divide(g_update, norm_array)).real
+
+    g[g < 0] = 0
+    g -= g.min()
+    g /= g.max()
+    return g
+
+
+# In[ ]:
 
 
 def resize(img):
@@ -272,7 +277,7 @@ ax2.imshow(labels, cmap="gray")
 plt.show()
 
 
-# In[14]:
+# In[ ]:
 
 
 # input shape: (H, W, C)
@@ -290,7 +295,7 @@ def rotate90(volume: np.ndarray, k=None, reverse=False):
     return resize_ski(volume, (new_height, new_width, volume.shape[2]))
 
 
-# In[15]:
+# In[ ]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -318,7 +323,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[16]:
+# In[ ]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -335,7 +340,7 @@ plt.tight_layout()
 plt.show()
 
 
-# In[17]:
+# In[ ]:
 
 
 def load_volume(split, index):
@@ -353,7 +358,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[18]:
+# In[ ]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -370,7 +375,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"total volume: {volume.shape}")
 
 
-# In[19]:
+# In[ ]:
 
 
 # # labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -381,7 +386,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[20]:
+# In[ ]:
 
 
 # # Free up memory
@@ -397,7 +402,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 #
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[21]:
+# In[ ]:
 
 
 # fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -411,14 +416,14 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # ## Create a dataset in the input volume
 #
 
-# In[22]:
+# In[ ]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[23]:
+# In[ ]:
 
 
 def generate_locations_ds(volume, mask):
@@ -444,13 +449,13 @@ def generate_locations_ds(volume, mask):
 #
 # Sanity check visually that our patches are where they should be.
 
-# In[24]:
+# In[ ]:
 
 
 possible_min_input = possible_max_input = all_median = all_MAD = None
 
 
-# In[25]:
+# In[ ]:
 
 
 from scipy.stats import median_abs_deviation
@@ -462,7 +467,7 @@ def calculate_all_MAD(volume):
     print("all_MAD", all_MAD)
 
 
-# In[26]:
+# In[ ]:
 
 
 def calculate_all_median(volume):
@@ -471,7 +476,7 @@ def calculate_all_median(volume):
     print("all_median", all_median)
 
 
-# In[27]:
+# In[ ]:
 
 
 def calculate_possibles(all_median, all_MAD):
@@ -482,21 +487,21 @@ def calculate_possibles(all_median, all_MAD):
     possible_min_input = 0
 
 
-# In[28]:
+# In[ ]:
 
 
 print("all_median", all_median)
 "all_median", all_median
 
 
-# In[29]:
+# In[ ]:
 
 
 print("all_MAD", all_MAD)
 "all_MAD", all_MAD
 
 
-# In[30]:
+# In[ ]:
 
 
 printed = True
@@ -530,7 +535,7 @@ def extract_subvolume(location, volume):
     return subvolume
 
 
-# In[31]:
+# In[ ]:
 
 
 data = np.array([[120, 24, 54]])
@@ -538,7 +543,7 @@ out = A.ToFloat(max_value=2**8 - 1)(image=data)
 out["image"]
 
 
-# In[32]:
+# In[ ]:
 
 
 out = A.FromFloat(max_value=2**8 - 1)(image=out["image"])
@@ -547,7 +552,7 @@ out["image"]
 
 # ## SubvolumeDataset
 
-# In[33]:
+# In[ ]:
 
 
 import torch
@@ -714,7 +719,7 @@ class SubvolumeDataset(Dataset):
 #
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[34]:
+# In[ ]:
 
 
 def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
@@ -740,7 +745,7 @@ def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[35]:
+# In[ ]:
 
 
 def trivial_baseline(dataset):
@@ -759,7 +764,7 @@ def trivial_baseline(dataset):
 
 # ## Dataset check
 
-# In[36]:
+# In[ ]:
 
 
 calculate_all_MAD(volume_train_1)
@@ -781,7 +786,7 @@ fig, ax = plt.subplots(Z_DIM // 2 + 1, 2, figsize=(12, 12))
 for i in range(Z_DIM):
     data = sample_ds[0][0][i]
     ax[i // 2][i % 2].hist(
-        data.flatten(), bins=100
+        data.flatten(), bins=255
     )  # Plot histogram of the flattened data
     ax[i // 2][i % 2].set_title(f"Histogram of Channel {i}")  # Add title to the plot
 fig.tight_layout()
@@ -790,7 +795,7 @@ fig.show()  # Display all figures
 
 # ## Model
 
-# In[37]:
+# In[ ]:
 
 
 def dice_coef_torch(prob_preds, targets, beta=0.5, smooth=1e-5):
@@ -858,16 +863,19 @@ class Model(pl.LightningModule):
         # self.register_buffer("mean", torch.tensor(params["mean"]).view(1, 3, 1, 1))
 
         # for image segmentation dice loss could be the best first choice
-        # self.segmentation_loss_fn = smp.losses.TverskyLoss(
+        self.segmentation_loss_fn = smp.losses.TverskyLoss(
+            smp.losses.BINARY_MODE,
+            log_loss=False,
+            from_logits=True,
+            smooth=1e-6,
+        )
+        # smp.losses.FocalLoss()
+        # self.segmentation_loss_fn = smp.losses.DiceLoss(
         #     smp.losses.BINARY_MODE,
         #     log_loss=False,
         #     from_logits=True,
-        #     smooth=1e-6,
+        #     smooth=1e-6
         # )
-        # smp.losses.FocalLoss()
-        self.segmentation_loss_fn = smp.losses.DiceLoss(
-            smp.losses.BINARY_MODE, log_loss=False, from_logits=True, smooth=1e-6
-        )
         # self.segmentation_loss_fn = dice_coef_torch
         # self.classification_loss_fn = smp.losses.SoftCrossEntropyLoss()
 
@@ -1061,20 +1069,20 @@ class Model(pl.LightningModule):
         }
 
 
-# In[38]:
+# In[ ]:
 
 
 volume_train_1.shape, labels_train_1.shape, mask_train_1.shape
 
 
-# In[39]:
+# In[ ]:
 
 
 # !export CUDA_LAUNCH_BLOCKING=1
 # !export TORCH_USE_CUDA_DSA=1
 
 
-# In[40]:
+# In[ ]:
 
 
 k_folds = 3
