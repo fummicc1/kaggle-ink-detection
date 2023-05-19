@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[1]:
+# In[ ]:
 
 
 import numpy as np
@@ -49,7 +49,7 @@ import torch.utils.data
 # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
 DATA_DIR = "/home/fummicc1/codes/competitions/kaggle-ink-detection"
 BUFFER = 128  # Half-size of papyrus patches we'll use as model inputs
-Z_LIST = list(range(12, 32))  # Offset of slices in the z direction
+Z_LIST = list(range(6, 48, 2))  # Offset of slices in the z direction
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
 SHARED_HEIGHT = 4000  # Max height to resize all papyrii
 
@@ -68,14 +68,14 @@ num_workers = 8
 exp = 1e-7
 mask_padding = 200
 
-num_epochs = 50
+num_epochs = 30
 lr = 1e-3
 
 pytorch_lightning.seed_everything(seed=42)
 torch.set_float32_matmul_precision("high")
 
 
-# In[2]:
+# In[ ]:
 
 
 # plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
@@ -87,7 +87,7 @@ plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
 
 # ## Load up the training data
 
-# In[3]:
+# In[ ]:
 
 
 import cupy as cp
@@ -236,7 +236,7 @@ def denoise_image(
     return g
 
 
-# In[4]:
+# In[ ]:
 
 
 def resize(img):
@@ -277,7 +277,7 @@ ax2.imshow(labels, cmap="gray")
 plt.show()
 
 
-# In[5]:
+# In[ ]:
 
 
 # input shape: (H, W, C)
@@ -295,7 +295,7 @@ def rotate90(volume: np.ndarray, k=None, reverse=False):
     return resize_ski(volume, (new_height, new_width, volume.shape[2]))
 
 
-# In[6]:
+# In[ ]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -323,7 +323,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[7]:
+# In[ ]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -340,7 +340,7 @@ plt.tight_layout()
 plt.show()
 
 
-# In[8]:
+# In[ ]:
 
 
 def load_volume(split, index):
@@ -358,7 +358,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[9]:
+# In[ ]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -375,7 +375,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"total volume: {volume.shape}")
 
 
-# In[10]:
+# In[ ]:
 
 
 # # labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -386,7 +386,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[11]:
+# In[ ]:
 
 
 # # Free up memory
@@ -402,7 +402,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 #
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[12]:
+# In[ ]:
 
 
 # fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -416,14 +416,14 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # ## Create a dataset in the input volume
 #
 
-# In[13]:
+# In[ ]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[14]:
+# In[ ]:
 
 
 def generate_locations_ds(volume, mask):
@@ -449,13 +449,13 @@ def generate_locations_ds(volume, mask):
 #
 # Sanity check visually that our patches are where they should be.
 
-# In[15]:
+# In[ ]:
 
 
 possible_min_input = possible_max_input = all_median = all_MAD = None
 
 
-# In[16]:
+# In[ ]:
 
 
 from scipy.stats import median_abs_deviation
@@ -467,7 +467,7 @@ def calculate_all_MAD(volume):
     print("all_MAD", all_MAD)
 
 
-# In[17]:
+# In[ ]:
 
 
 def calculate_all_median(volume):
@@ -476,7 +476,7 @@ def calculate_all_median(volume):
     print("all_median", all_median)
 
 
-# In[18]:
+# In[ ]:
 
 
 def calculate_possibles(all_median, all_MAD):
@@ -487,21 +487,21 @@ def calculate_possibles(all_median, all_MAD):
     possible_min_input = 0
 
 
-# In[19]:
+# In[ ]:
 
 
 print("all_median", all_median)
 "all_median", all_median
 
 
-# In[20]:
+# In[ ]:
 
 
 print("all_MAD", all_MAD)
 "all_MAD", all_MAD
 
 
-# In[21]:
+# In[ ]:
 
 
 printed = True
@@ -535,7 +535,7 @@ def extract_subvolume(location, volume):
     return subvolume
 
 
-# In[22]:
+# In[ ]:
 
 
 data = np.array([[120, 24, 54]])
@@ -543,7 +543,7 @@ out = A.ToFloat(max_value=2**8 - 1)(image=data)
 out["image"]
 
 
-# In[23]:
+# In[ ]:
 
 
 out = A.FromFloat(max_value=2**8 - 1)(image=out["image"])
@@ -552,7 +552,7 @@ out["image"]
 
 # ## SubvolumeDataset
 
-# In[24]:
+# In[ ]:
 
 
 import torch
@@ -719,7 +719,7 @@ class SubvolumeDataset(Dataset):
 #
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[25]:
+# In[ ]:
 
 
 def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
@@ -745,7 +745,7 @@ def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[26]:
+# In[ ]:
 
 
 def trivial_baseline(dataset):
@@ -764,68 +764,38 @@ def trivial_baseline(dataset):
 
 # ## Dataset check
 
-# In[27]:
+# In[ ]:
 
 
-all_MAD = np.array(
-    [
-        13550.0,
-        13778.0,
-        14048.0,
-        14332.0,
-        14592.0,
-        14804.0,
-        14870.0,
-        14558.0,
-        13639.0,
-        12094.0,
-        10135.0,
-        8519.0,
-    ]
+calculate_all_MAD(volume_train_1)
+
+calculate_all_median(volume_train_1)
+
+sample_locations = generate_locations_ds(volume_train_1, mask_train_1)
+sample_ds = SubvolumeDataset(
+    sample_locations,
+    volume_train_1,
+    labels_train_1,
+    BUFFER,
+    is_train=False,
 )
 
-all_median = np.array(
-    [
-        21908.0,
-        22264.0,
-        22528.0,
-        22622.0,
-        22458.0,
-        21933.0,
-        21038.0,
-        19960.0,
-        18980.0,
-        18247.0,
-        17806.0,
-        17675.0,
-    ]
-)
 
-# sample_locations = generate_locations_ds(volume_train_1, mask_train_1)
-# sample_ds = SubvolumeDataset(
-#     sample_locations,
-#     volume_train_1,
-#     labels_train_1,
-#     BUFFER,
-#     is_train=False,
-# )
-
-
-# fig, ax = plt.subplots(Z_DIM // 2, 2, figsize=(12, 12))
-# # Assuming `data` is your (12, 244, 244) array
-# for i in range(Z_DIM):
-#     data = sample_ds[0][0][i]
-#     ax[i // 2][i % 2].hist(
-#         data.flatten(), bins=100
-#     )  # Plot histogram of the flattened data
-#     ax[i // 2][i % 2].set_title(f"Histogram of Channel {i}")  # Add title to the plot
-# fig.tight_layout()
-# fig.show()  # Display all figures
+fig, ax = plt.subplots(Z_DIM // 2 + 1, 2, figsize=(12, 12))
+# Assuming `data` is your (12, 244, 244) array
+for i in range(Z_DIM):
+    data = sample_ds[0][0][i]
+    ax[i // 2][i % 2].hist(
+        data.flatten(), bins=100
+    )  # Plot histogram of the flattened data
+    ax[i // 2][i % 2].set_title(f"Histogram of Channel {i}")  # Add title to the plot
+fig.tight_layout()
+fig.show()  # Display all figures
 
 
 # ## Model
 
-# In[28]:
+# In[ ]:
 
 
 def dice_coef_torch(prob_preds, targets, beta=0.5, smooth=1e-5):
@@ -893,19 +863,16 @@ class Model(pl.LightningModule):
         # self.register_buffer("mean", torch.tensor(params["mean"]).view(1, 3, 1, 1))
 
         # for image segmentation dice loss could be the best first choice
-        self.segmentation_loss_fn = smp.losses.TverskyLoss(
-            smp.losses.BINARY_MODE,
-            log_loss=False,
-            from_logits=True,
-            smooth=1e-6,
-        )
-        # smp.losses.FocalLoss()
-        # self.segmentation_loss_fn = smp.losses.DiceLoss(
+        # self.segmentation_loss_fn = smp.losses.TverskyLoss(
         #     smp.losses.BINARY_MODE,
         #     log_loss=False,
         #     from_logits=True,
-        #     smooth=1e-6
+        #     smooth=1e-6,
         # )
+        # smp.losses.FocalLoss()
+        self.segmentation_loss_fn = smp.losses.DiceLoss(
+            smp.losses.BINARY_MODE, log_loss=False, from_logits=True, smooth=1e-6
+        )
         # self.segmentation_loss_fn = dice_coef_torch
         # self.classification_loss_fn = smp.losses.SoftCrossEntropyLoss()
 
@@ -1099,20 +1066,20 @@ class Model(pl.LightningModule):
         }
 
 
-# In[29]:
+# In[ ]:
 
 
 volume_train_1.shape, labels_train_1.shape, mask_train_1.shape
 
 
-# In[30]:
+# In[ ]:
 
 
 # !export CUDA_LAUNCH_BLOCKING=1
 # !export TORCH_USE_CUDA_DSA=1
 
 
-# In[31]:
+# In[ ]:
 
 
 k_folds = 3
@@ -1207,14 +1174,14 @@ for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
     trainer.fit(model, train_loader, val_loader)
 
 
-# In[32]:
+# In[ ]:
 
 
 print("all_median", all_median)
 all_median
 
 
-# In[33]:
+# In[ ]:
 
 
 print("all_MAD", all_MAD)
