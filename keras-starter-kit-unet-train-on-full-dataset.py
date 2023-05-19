@@ -17,6 +17,9 @@ from albumentations.pytorch import ToTensorV2
 import pytorch_lightning
 import segmentation_models_pytorch as smp
 import pytorch_lightning as pl
+import pytorch_lightning.plugins
+from skimage.transform import resize as resize_ski
+from pytorch_lightning.strategies.ddp import DDPStrategy
 import os
 
 from scipy.ndimage import distance_transform_edt
@@ -43,15 +46,18 @@ import torch.utils.data
 # Data config
 # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
 DATA_DIR = '/home/fummicc1/codes/competitions/kaggle-ink-detection'
-BUFFER = 80 # Half-size of papyrus patches we'll use as model inputs
-Z_LIST = list(range(0, 61, 4))  # Offset of slices in the z direction
+BUFFER = 112 # Half-size of papyrus patches we'll use as model inputs
+Z_LIST = list(range(24, 36))  # Offset of slices in the z direction
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
-SHARED_LENGTH = 4000  # Max length(width or height) to resize all papyrii
+SHARED_HEIGHT = 4000  # Max length(width or height) to resize all papyrii
 
 # Model config
-BATCH_SIZE = 128
+BATCH_SIZE = 64
 
+# backbone = "mit_b1"
+# backbone = "efficientnet-b5"
 backbone = "se_resnext50_32x4d"
+# backbone = "resnext50_32x4d"
 # backbone = "resnet50"
 
 device = torch.device("cuda")
@@ -67,7 +73,7 @@ pytorch_lightning.seed_everything(seed=42)
 torch.set_float32_matmul_precision('high')
 
 
-# In[ ]:
+# In[2]:
 
 
 # plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
@@ -79,19 +85,14 @@ plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
 
 # ## Load up the training data
 
-# In[ ]:
+# In[3]:
 
 
 def resize(img):
     current_height, current_width = img.shape    
     aspect_ratio = current_width / current_height
-    if current_height > current_width:
-        new_height = SHARED_LENGTH
-        new_width = int(SHARED_LENGTH * aspect_ratio)
-    else:
-        new_width = SHARED_LENGTH
-        new_height = int(SHARED_LENGTH / aspect_ratio)        
-        
+    new_height = SHARED_HEIGHT
+    new_width = int(SHARED_HEIGHT * aspect_ratio)
     new_size = (new_width, new_height)
     # (W, H)の順で渡すが結果は(H, W)になっている
     img = cv2.resize(img, new_size)
@@ -123,7 +124,22 @@ ax2.imshow(labels, cmap='gray')
 plt.show()
 
 
-# In[ ]:
+# In[4]:
+
+
+# input shape: (H, W, C)
+def rotate90(volume: np.ndarray):    
+    volume = np.rot90(volume)
+    height = volume.shape[0]
+    width = volume.shape[1]
+    new_height = SHARED_HEIGHT
+    new_width = int(new_height * width / height)
+    if len(volume.shape) == 2:
+        return cv2.resize(volume, (new_width, new_height))
+    return resize_ski(volume, (new_height, new_width, volume.shape[2]))
+
+
+# In[5]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -151,7 +167,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[ ]:
+# In[6]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -168,7 +184,7 @@ plt.tight_layout()
 plt.show()
 
 
-# In[ ]:
+# In[7]:
 
 
 def load_volume(split, index):
@@ -186,7 +202,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[ ]:
+# In[8]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -203,7 +219,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"total volume: {volume.shape}")
 
 
-# In[ ]:
+# In[9]:
 
 
 # # labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -214,7 +230,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[ ]:
+# In[10]:
 
 
 # # Free up memory
@@ -230,7 +246,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # 
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[ ]:
+# In[11]:
 
 
 # fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -244,14 +260,14 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # ## Create a dataset in the input volume
 # 
 
-# In[ ]:
+# In[12]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[ ]:
+# In[13]:
 
 
 def generate_locations_ds(volume, mask):
@@ -263,8 +279,8 @@ def generate_locations_ds(volume, mask):
     # Generate train locations
     volume_height, volume_width = volume.shape[:-1]
 
-    for y in range(BUFFER, volume_height - BUFFER, BUFFER // 3):
-        for x in range(BUFFER, volume_width - BUFFER, BUFFER // 3):
+    for y in range(BUFFER, volume_height - BUFFER, BUFFER):
+        for x in range(BUFFER, volume_width - BUFFER, BUFFER):
             if is_in_mask_train((y, x)):
                 locations.append((y, x))
 
@@ -277,13 +293,13 @@ def generate_locations_ds(volume, mask):
 # 
 # Sanity check visually that our patches are where they should be.
 
-# In[ ]:
+# In[14]:
 
 
 possible_min_input = possible_max_input = all_median = all_MAD = None
 
 
-# In[ ]:
+# In[15]:
 
 
 from scipy.stats import median_abs_deviation
@@ -295,7 +311,7 @@ def calculate_all_MAD(volume):
     print("all_MAD", all_MAD)
 
 
-# In[ ]:
+# In[16]:
 
 
 def calculate_all_median(volume):
@@ -304,7 +320,7 @@ def calculate_all_median(volume):
     print("all_median", all_median)
 
 
-# In[ ]:
+# In[17]:
 
 
 def calculate_possibles(all_median, all_MAD):
@@ -315,21 +331,21 @@ def calculate_possibles(all_median, all_MAD):
     possible_min_input = 0
 
 
-# In[ ]:
+# In[18]:
 
 
 print("all_median", all_median)
 "all_median", all_median
 
 
-# In[ ]:
+# In[19]:
 
 
 print("all_MAD", all_MAD)
 "all_MAD", all_MAD
 
 
-# In[ ]:
+# In[20]:
 
 
 printed = True
@@ -360,7 +376,7 @@ def extract_subvolume(location, volume):
     return subvolume
 
 
-# In[ ]:
+# In[21]:
 
 
 data = np.array([[120, 24, 54]])
@@ -368,7 +384,7 @@ out = A.ToFloat(max_value=2**8-1)(image=data)
 out["image"]
 
 
-# In[ ]:
+# In[22]:
 
 
 out = A.FromFloat(max_value=2**8-1)(image=out["image"])
@@ -377,7 +393,7 @@ out["image"]
 
 # ## SubvolumeDataset
 
-# In[ ]:
+# In[23]:
 
 
 import torch
@@ -438,18 +454,19 @@ class SubvolumeDataset(Dataset):
             size = int(BUFFER * 2)
             performed = A.Compose([
                 # A.ToFloat(max_value=possible_max_input - possible_min_input),
-                A.ToFloat(max_value=2**16-1),                
+                # A.ToFloat(max_value=2**16-1),       
+                NormalizeTransform(always_apply=True),         
                 A.HorizontalFlip(p=0.5), # 水平方向に反転
                 A.VerticalFlip(p=0.5), # 水平方向に反転
                 A.RandomRotate90(p=0.5),
                 # A.RandomBrightnessContrast(p=0.4),
                 A.ShiftScaleRotate(p=0.5, border_mode=0), # シフト、スケーリング、回転
                 # A.PadIfNeeded(min_height=size, min_width=size, always_apply=True, border_mode=0), # 必要に応じてパディングを追加
-                A.RandomCrop(height=int(size // 1.1), width=int(size // 1.1), p=0.5), # ランダムにクロップ, Moduleの中で計算する際に次元がバッチ内で揃っている必要があるので最後にサイズは揃える
+                A.RandomCrop(height=int(size // 1.25), width=int(size // 1.25), p=0.5), # ランダムにクロップ, Moduleの中で計算する際に次元がバッチ内で揃っている必要があるので最後にサイズは揃える
                 # A.Perspective(p=0.5), # パースペクティブ変換                
                 # A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
-                A.CoarseDropout(max_holes=1, max_width=int(size * 0.1), max_height=int(size * 0.1), 
-                                mask_fill_value=0, p=0.2),
+                # A.CoarseDropout(max_holes=1, max_width=int(size * 0.1), max_height=int(size * 0.1), 
+                #                 mask_fill_value=0, p=0.2),
                 A.GaussianBlur(p=0.25, blur_limit=(3, 5)),
                 A.MedianBlur(p=0.25, blur_limit=5),
                 A.Resize(BUFFER * 2, BUFFER * 2, always_apply=True),                
@@ -457,8 +474,7 @@ class SubvolumeDataset(Dataset):
                 #     mean= [0] * Z_DIM,
                 #     std= [1] * Z_DIM
                 # ),
-                # A.FromFloat(max_value=possible_max_input - possible_min_input),
-                NormalizeTransform(always_apply=True),
+                # A.FromFloat(max_value=possible_max_input - possible_min_input),                
                 ToTensorV2(transpose_mask=True),                
             ])(image=subvolume, mask=label)            
             subvolume = performed["image"]
@@ -476,7 +492,7 @@ class SubvolumeDataset(Dataset):
             if label is None:
                 performed = A.Compose([            
                     # A.ToFloat(max_value=possible_max_input - possible_min_input),
-                    A.ToFloat(max_value=2**16-1),
+                    # A.ToFloat(max_value=2**16-1),
                     # A.Normalize(
                     #     mean= [0] * Z_DIM,
                     #     std= [1] * Z_DIM
@@ -490,7 +506,7 @@ class SubvolumeDataset(Dataset):
                 # print("subvolume in val dataset (before aug)", subvolume, file=open("before-val-aug.log", "w")) 
                 performed = A.Compose([            
                     # A.ToFloat(max_value=possible_max_input - possible_min_input),
-                    A.ToFloat(max_value=2**16-1),
+                    # A.ToFloat(max_value=2**16-1),
                     # A.Normalize(
                     #     mean= [0] * Z_DIM,
                     #     std= [1] * Z_DIM
@@ -514,7 +530,7 @@ class SubvolumeDataset(Dataset):
 # 
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[ ]:
+# In[24]:
 
 
 def visualize_dataset_patches(locations_ds, labels, mode: str, fold = 0):
@@ -533,7 +549,7 @@ def visualize_dataset_patches(locations_ds, labels, mode: str, fold = 0):
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[ ]:
+# In[25]:
 
 
 def trivial_baseline(dataset):
@@ -551,7 +567,7 @@ def trivial_baseline(dataset):
 
 # ## Model
 
-# In[ ]:
+# In[26]:
 
 
 def dice_coef_torch(prob_preds, targets, beta=0.5, smooth=1e-5):
@@ -578,8 +594,26 @@ class Model(pl.LightningModule):
 
     def __init__(self, encoder_name, in_channels, out_classes, **kwargs):
         super().__init__()
-        self.model = smp.UnetPlusPlus(
+        # self.model = smp.UnetPlusPlus(
+        #     encoder_name=encoder_name, 
+        #     # encoder_weights="imagenet",
+        #     encoder_weights="swsl",
+        #     # encoder_weights=None,
+        #     encoder_depth=5,
+        #     decoder_channels=[512, 256, 128, 64, 32],
+        #     in_channels=in_channels,
+        #     classes=out_classes,
+        #     # aux_params={
+        #     #     "pooling": "max",
+        #     #     "classes": out_classes,
+        #     #     "dropout": 0.2,
+        #     #     "activation": None,
+        #     # },
+        #     **kwargs,
+        # )
+        self.model = smp.Unet(
             encoder_name=encoder_name, 
+            # encoder_weights="imagenet",
             encoder_weights="imagenet",
             # encoder_weights=None,
             encoder_depth=5,
@@ -594,15 +628,21 @@ class Model(pl.LightningModule):
             # },
             **kwargs,
         )
-
+        
+        
         # preprocessing parameteres for image
         # params = smp.encoders.get_preprocessing_params(encoder_name)
         # self.register_buffer("std", torch.tensor(params["std"]).view(1, 3, 1, 1))
         # self.register_buffer("mean", torch.tensor(params["mean"]).view(1, 3, 1, 1))
 
         # for image segmentation dice loss could be the best first choice
-        self.segmentation_loss_fn = smp.losses.TverskyLoss(smp.losses.BINARY_MODE, from_logits=True)
-        # self.segmentation_loss_fn = smp.losses.DiceLoss(smp.losses.BINARY_MODE, log_loss=True, from_logits=True)
+        # self.segmentation_loss_fn = smp.losses.TverskyLoss(smp.losses.BINARY_MODE, from_logits=True)
+        self.segmentation_loss_fn = smp.losses.DiceLoss(
+            smp.losses.BINARY_MODE,
+            log_loss=False,
+            from_logits=True,
+            smooth=1e-6
+        )
         # self.segmentation_loss_fn = dice_coef_torch
         # self.classification_loss_fn = smp.losses.SoftCrossEntropyLoss()
 
@@ -774,7 +814,13 @@ class Model(pl.LightningModule):
         return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "valid_dataset_iou"}
 
 
-# In[26]:
+# In[27]:
+
+
+volume_train_1.shape, labels_train_1.shape, mask_train_1.shape
+
+
+# In[28]:
 
 
 k_folds = 3
@@ -785,7 +831,7 @@ kfold = KFold(
 data_list = [
     (volume_train_1, labels_train_1, mask_train_1),
     (volume_train_2, labels_train_2, mask_train_2),
-    (volume_train_3, labels_train_3, mask_train_3),
+    (volume_train_3, labels_train_3, mask_train_3),    
 ]
 
 all_volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1)
@@ -797,11 +843,14 @@ calculate_possibles(all_median, all_MAD)
 for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
     print(f'FOLD {fold}')
     print('--------------------------------')
+    print("train_data", train_data)
+    print("val_data", val_data)
     one = data_list[train_data[0]]
     two = data_list[train_data[1]]
-    train_volume = np.concatenate([one[0], two[0]], axis=1)
-    train_label = np.concatenate([one[1], two[1]], axis=1)
-    train_mask = np.concatenate([one[2], two[2]], axis=1)
+    three = (rotate90(one[0]), rotate90(one[1]), rotate90(one[2]))
+    train_volume = np.concatenate([one[0], two[0], three[0]], axis=1)
+    train_label = np.concatenate([one[1], two[1], three[1]], axis=1)
+    train_mask = np.concatenate([one[2], two[2], three[2]], axis=1)
     val_volume, val_label, val_mask = data_list[val_data[0]]    
     
     train_locations_ds = generate_locations_ds(train_volume, train_mask)
@@ -823,6 +872,7 @@ for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
         devices="auto",
         accelerator="auto",
         log_every_n_steps=BATCH_SIZE // 4,
+        strategy="ddp_find_unused_parameters_false",
     )
     
     # Sample elements randomly from a given list of ids, no replacement.
