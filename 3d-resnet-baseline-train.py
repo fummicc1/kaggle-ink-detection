@@ -19,7 +19,7 @@
 # then get cv0.55 (^w^)
 #
 
-# In[1]:
+# In[ ]:
 
 
 import os, cv2
@@ -93,13 +93,12 @@ class CFG:
     # backbone = 'resnext50_32x4d'
     pretrained = True
 
-    in_chans = 16  # 65
-    load_chans = 16
+    in_chans = 12  # 65
     # ============== training cfg =============
-    prd_size = 192
-    stride = prd_size // 2
+    prd_size = 224
+    stride = prd_size // 4
 
-    batch_size = 96  # 32
+    batch_size = 64  # 32
     use_amp = True
 
     seed = 42
@@ -110,10 +109,11 @@ class CFG:
     device_ids = [0, 1, 2, 3]
 
     lr = 1e-3
-    epochs = 10
+    epochs = 20
 
-    TH = 0.55
+    TH = 0.5
     exp = 1e-6
+    model_depth = 34
 
 
 # In[ ]:
@@ -241,7 +241,7 @@ class CustomDataset(Dataset):
                     A.RandomCrop(
                         height=int(size / 1.25), width=int(size / 1.25), p=0.5
                     ),  # ランダムにクロップ, Moduleの中で計算する際に次元がバッチ内で揃っている必要があるので最後にサイズは揃える
-                    A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
+                    # A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
                     A.CoarseDropout(
                         max_holes=1,
                         max_width=int(size * 0.3),
@@ -390,7 +390,7 @@ class Decoder(nn.Module):
 
 
 class SegModel(nn.Module):
-    def __init__(self, model_depth=18):
+    def __init__(self, model_depth=CFG.model_depth):
         super().__init__()
         self.encoder = generate_model(model_depth=model_depth, n_input_channels=1)
         self.decoder = Decoder(encoder_dims=[64, 128, 256, 512], upscale=4)
@@ -511,7 +511,7 @@ class Model(pl.LightningModule):
             smp.losses.BINARY_MODE,
             log_loss=False,
             from_logits=True,
-            smooth=1e-6,
+            smooth=CFG.exp,
         )
 
     def forward(self, image):
@@ -619,6 +619,8 @@ class Model(pl.LightningModule):
         # print("predictions.shape after sigmoid", predictions.shape)
         # →(BATCH, W, H, C)
         predictions = torch.permute(predictions, (0, 3, 2, 1))
+        predictions = predictions.squeeze(dim=-1)
+        # print("prediction shape", predictions.shape)
         predictions = (
             predictions.cpu().numpy()
         )  # move predictions to cpu and convert to numpy
@@ -639,18 +641,20 @@ class Model(pl.LightningModule):
         print("locs", locs.shape)
         print("preds", preds.shape)
 
-        new_predictions_map = np.zeros_like(predictions_map[:, :, 0])[:, :, np.newaxis]
-        new_predictions_map_counts = np.zeros_like(predictions_map_counts[:, :, 0])[
-            :, :, np.newaxis
-        ]
+        new_predictions_map = np.zeros_like(predictions_map[:, :, 0])
+        new_predictions_map_counts = np.zeros_like(predictions_map_counts[:, :, 0])
 
         for (x1, y1, x2, y2), pred in zip(locs, preds):
-            new_predictions_map[x1:x2, y1:y2, :] += pred
-            new_predictions_map_counts[x1:x2, y1:y2, :] += 1
+            new_predictions_map[y1:y2, x1:x2] += pred
+            new_predictions_map_counts[y1:y2, x1:x2] += 1
         new_predictions_map /= new_predictions_map_counts + exp
-        new_predictions_map = new_predictions_map.get()[:, :, np.newaxis]
+        new_predictions_map = new_predictions_map[:, :, np.newaxis]
+        new_predictions_map_counts = new_predictions_map_counts[:, :, np.newaxis]
         predictions_map = np.concatenate(
             [predictions_map, new_predictions_map], axis=-1
+        )
+        predictions_map_counts = np.concatenate(
+            [predictions_map_counts, new_predictions_map_counts], axis=-1
         )
         print("new_predictions_map", new_predictions_map.shape)
         print("predictions_map", predictions_map.shape)
@@ -675,12 +679,13 @@ class Model(pl.LightningModule):
 
 
 results = []
+model = Model()
 
 val_fragment_id = 3
 
 
 def train(fragment_id):
-    global predictions_map, predictions_map_counts, pad0, pad1, ori_h, ori_w
+    global predictions_map, predictions_map_counts, pad0, pad1, ori_h, ori_w, model
     loader, xyxys = make_dataset(fragment_id, is_train_data=True)
     val_loader, _ = make_dataset(val_fragment_id, is_train_data=False)
 
@@ -704,16 +709,6 @@ def train(fragment_id):
     ].astype(np.float64)
     predictions_map_counts = np.empty_like(predictions_map).astype(np.uint8)
 
-    # for step, (images, labels) in tqdm(enumerate(lodaer), total=len(loader)):
-    #     labels: torch.Tensor = labels.cuda().float()
-    #     images: torch.Tensor = images.cuda().float()
-    #     print("labels", labels.shape, "images", images.shape)
-    #     preds = model(images)
-
-    #     print("preds", preds.shape)
-
-    model = Model()
-
     trainer = pl.Trainer(
         max_epochs=CFG.epochs,
         devices="auto",
@@ -728,69 +723,5 @@ def train(fragment_id):
     gc.collect()
 
 
-for fragment_id in fragment_ids[1:]:
+for fragment_id in fragment_ids:
     train(fragment_id)
-
-# for fragment_id in fragment_ids:
-#     train(fragment_id)
-#     test_loader, xyxys = make_dataset(fragment_id)
-
-
-#     binary_mask = cv2.imread(CFG.comp_dataset_path + f"{mode}/{fragment_id}/mask.png", 0)
-#     binary_mask = (binary_mask / 255).astype(int)
-
-#     ori_h = binary_mask.shape[0]
-#     ori_w = binary_mask.shape[1]
-
-#     pad0 = (CFG.prd_size - binary_mask.shape[0] % CFG.prd_size)
-#     pad1 = (CFG.prd_size - binary_mask.shape[1] % CFG.prd_size)
-
-#     binary_mask = np.pad(binary_mask, [(0, pad0), (0, pad1)], constant_values=0)
-
-#     mask_pred = np.zeros(binary_mask.shape)
-#     mask_count = np.zeros(binary_mask.shape)
-#     for step, (images,xys) in tqdm(enumerate(test_loader), total=len(test_loader)):
-#         images = images.cuda()
-#         batch_size = images.size(0)
-
-#         with torch.no_grad():
-#             y_preds=TTA(images,model)
-
-
-#         for k, (x1, y1, x2, y2) in enumerate(xys):
-#             mask_pred[y1:y2, x1:x2] += y_preds[k].squeeze(0).cpu().numpy()
-#             mask_count[y1:y2, x1:x2] += 1
-
-#     print(f'mask_count_min: {mask_count.min()}')
-#     mask_pred /= (mask_count+1e-7)
-
-
-#     fig, axes = plt.subplots(1, 4, figsize=(15, 8))
-#     axes[0].imshow(mask_count)
-#     axes[1].imshow(mask_pred.copy())
-
-#     axes[2].imshow(mask_pred)
-
-#     mask_pred = mask_pred[:ori_h, :ori_w]
-#     binary_mask = binary_mask[:ori_h, :ori_w]
-
-#     mask_pred = (mask_pred >= TH).astype(np.uint8)
-#     mask_pred=mask_pred.astype(int)
-#     mask_pred *= binary_mask
-
-#     axes[3].imshow(mask_pred)
-#     plt.show()
-
-#     inklabels_rle = rle(mask_pred)
-
-#     results.append((fragment_id, inklabels_rle))
-
-
-#     del mask_pred, mask_count
-#     del test_loader
-
-#     gc.collect()
-#     torch.cuda.empty_cache()
-#     plt.clf()
-#     fig.clear()
-#     plt.close(fig)
