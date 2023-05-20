@@ -511,7 +511,7 @@ class Model(pl.LightningModule):
             smp.losses.BINARY_MODE,
             log_loss=False,
             from_logits=True,
-            smooth=CFG.exp,
+            smooth=1e-6,
         )
 
     def forward(self, image):
@@ -718,10 +718,12 @@ def train(fragment_id):
     )
     trainer.fit(model, loader, val_loader)
     del trainer
-    del model
     del loader
     gc.collect()
 
 
-for fragment_id in fragment_ids:
+for i, fragment_id in enumerate(fragment_ids[1:]):
+    model = Model.load_from_checkpoint(
+        "/home/fummicc1/codes/competitions/kaggle-ink-detection/lightning_logs/gxltzyhn/checkpoints/epoch=19-step=820.ckpt",
+    )
     train(fragment_id)
