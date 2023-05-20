@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[ ]:
+# In[1]:
 
 
 import numpy as np
@@ -57,7 +57,7 @@ Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_
 SHARED_HEIGHT = 2560  # Max height to resize all papyrii
 
 # Model config
-BATCH_SIZE = 24
+BATCH_SIZE = 12
 
 # backbone = "mit_b1"
 # backbone = "efficientnet-b5"
@@ -78,7 +78,7 @@ pytorch_lightning.seed_everything(seed=42)
 torch.set_float32_matmul_precision("high")
 
 
-# In[ ]:
+# In[2]:
 
 
 # plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
@@ -90,7 +90,7 @@ plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
 
 # ## Load up the training data
 
-# In[ ]:
+# In[3]:
 
 
 # import cupy as cp
@@ -222,7 +222,7 @@ plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
 #     return g
 
 
-# In[ ]:
+# In[4]:
 
 
 def resize(img):
@@ -263,7 +263,7 @@ ax2.imshow(labels, cmap="gray")
 plt.show()
 
 
-# In[ ]:
+# In[5]:
 
 
 # input shape: (H, W, C)
@@ -281,7 +281,7 @@ def rotate90(volume: np.ndarray, k=None, reverse=False):
     return resize_ski(volume, (new_height, new_width, volume.shape[2]))
 
 
-# In[ ]:
+# In[6]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -309,7 +309,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[ ]:
+# In[7]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -326,7 +326,7 @@ plt.tight_layout()
 plt.show()
 
 
-# In[ ]:
+# In[8]:
 
 
 def load_volume(split, index):
@@ -344,7 +344,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[ ]:
+# In[9]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -361,7 +361,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"total volume: {volume.shape}")
 
 
-# In[ ]:
+# In[10]:
 
 
 # # labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -372,7 +372,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[ ]:
+# In[11]:
 
 
 # # Free up memory
@@ -388,7 +388,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 #
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[ ]:
+# In[12]:
 
 
 # fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -402,14 +402,14 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # ## Create a dataset in the input volume
 #
 
-# In[ ]:
+# In[13]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[ ]:
+# In[14]:
 
 
 def generate_locations_ds(volume, mask):
@@ -435,13 +435,13 @@ def generate_locations_ds(volume, mask):
 #
 # Sanity check visually that our patches are where they should be.
 
-# In[ ]:
+# In[15]:
 
 
 possible_min_input = possible_max_input = all_median = all_MAD = None
 
 
-# In[ ]:
+# In[16]:
 
 
 from scipy.stats import median_abs_deviation
@@ -453,7 +453,7 @@ def calculate_all_MAD(volume):
     print("all_MAD", all_MAD)
 
 
-# In[ ]:
+# In[17]:
 
 
 def calculate_all_median(volume):
@@ -462,7 +462,7 @@ def calculate_all_median(volume):
     print("all_median", all_median)
 
 
-# In[ ]:
+# In[18]:
 
 
 def calculate_possibles(all_median, all_MAD):
@@ -473,21 +473,21 @@ def calculate_possibles(all_median, all_MAD):
     possible_min_input = 0
 
 
-# In[ ]:
+# In[19]:
 
 
 print("all_median", all_median)
 "all_median", all_median
 
 
-# In[ ]:
+# In[20]:
 
 
 print("all_MAD", all_MAD)
 "all_MAD", all_MAD
 
 
-# In[ ]:
+# In[21]:
 
 
 printed = True
@@ -521,7 +521,7 @@ def extract_subvolume(location, volume):
     return subvolume
 
 
-# In[ ]:
+# In[22]:
 
 
 data = np.array([[120, 24, 54]])
@@ -529,7 +529,7 @@ out = A.ToFloat(max_value=2**8 - 1)(image=data)
 out["image"]
 
 
-# In[ ]:
+# In[23]:
 
 
 out = A.FromFloat(max_value=2**8 - 1)(image=out["image"])
@@ -538,7 +538,7 @@ out["image"]
 
 # ## SubvolumeDataset
 
-# In[ ]:
+# In[34]:
 
 
 import torch
@@ -556,7 +556,8 @@ class NormalizeTransform(ImageOnlyTransform):
         median = np.full_like(img, all_median).astype(np.float32)
         mad = np.full_like(img, all_MAD).astype(np.float32)
         # img = (img - median) / mad
-        img = img / median
+        # img = img / median
+        img = img / 255
         img = (img - 0.45) / 0.225
         # img[img < 0] = 0
         return img
@@ -706,7 +707,7 @@ class SubvolumeDataset(Dataset):
 #
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[ ]:
+# In[35]:
 
 
 def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
@@ -732,7 +733,7 @@ def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[ ]:
+# In[26]:
 
 
 def trivial_baseline(dataset):
@@ -751,7 +752,7 @@ def trivial_baseline(dataset):
 
 # ## Dataset check
 
-# In[ ]:
+# In[27]:
 
 
 all_volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1)
@@ -761,7 +762,7 @@ calculate_all_MAD(all_volume)
 calculate_all_median(all_volume)
 
 
-# In[ ]:
+# In[36]:
 
 
 sample_locations = generate_locations_ds(volume_train_1, mask_train_1)
@@ -803,15 +804,17 @@ plt.show()
 
 # plt.hist(img.flatten())
 
-# fig, ax = plt.subplots(Z_DIM // 2 + 1, 2, figsize=(4, 12))
-# # Assuming `data` is your (12, 244, 244) array
-# for i in range(Z_DIM):
-#     img = sample_ds[150][0][i, :, :]
-#     ax[i // 2][i % 2].imshow(img, cmap="gray")
-#     # ax[i // 2][i % 2].hist(data.flatten(), bins=255)  # Plot histogram of the flattened data
-#     # ax[i // 2][i % 2].set_title(f"Histogram of Channel {i}")  # Add title to the plot
-# fig.tight_layout()
-# fig.show()  # Display all figures
+fig, ax = plt.subplots(Z_DIM // 2 + 1, 2, figsize=(12, 12))
+# Assuming `data` is your (12, 244, 244) array
+for i in range(Z_DIM):
+    img = sample_ds[150][0][i, :, :]
+    # ax[i // 2][i % 2].imshow(img, cmap="gray")
+    ax[i // 2][i % 2].hist(
+        img.flatten(), bins=255
+    )  # Plot histogram of the flattened data
+    ax[i // 2][i % 2].set_title(f"Histogram of Channel {i}")  # Add title to the plot
+fig.tight_layout()
+fig.show()  # Display all figures
 
 
 # ## Model
@@ -860,7 +863,7 @@ class Model(pl.LightningModule):
         #     # },
         #     **kwargs,
         # )
-        self.model = smp.Unet(
+        self.model = smp.UnetPlusPlus(
             encoder_name=encoder_name,
             # encoder_weights="imagenet",
             encoder_weights="imagenet",
@@ -1164,7 +1167,7 @@ for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
         max_epochs=num_epochs,
         devices="auto",
         accelerator="auto",
-        # strategy="ddp_find_unused_parameters_false",
+        strategy="ddp_find_unused_parameters_false",
         # strategy="ddp_fork",
     )
 
