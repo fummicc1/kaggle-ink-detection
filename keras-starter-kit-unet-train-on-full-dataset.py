@@ -21,7 +21,9 @@ import pytorch_lightning as pl
 import pytorch_lightning.plugins
 from skimage.transform import resize as resize_ski
 from pytorch_lightning.strategies.ddp import DDPStrategy
+from pytorch_lightning.loggers import WandbLogger
 import os
+
 
 from scipy.ndimage import distance_transform_edt
 
@@ -50,16 +52,16 @@ import torch.utils.data
 DATA_DIR = '/home/fummicc1/codes/Kaggle/kaggle-ink-detection'
 BUFFER = 160 # Half-size of papyrus patches we'll use as model inputs
 # Z_LIST = list(range(0, 20, 5)) + list(range(22, 34))  # Offset of slices in the z direction
-Z_LIST = list(range(22, 34))  # Offset of slices in the z direction
+Z_LIST = list(range(32-6, 32 + 6))  # Offset of slices in the z direction
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
-SHARED_HEIGHT = 2560  # Max height to resize all papyrii
+SHARED_HEIGHT = 4000  # Max height to resize all papyrii
 
 # Model config
-BATCH_SIZE = 12
+BATCH_SIZE = 96
 
-# backbone = "mit_b1"
+backbone = "mit_b1"
 # backbone = "efficientnet-b5"
-backbone = "se_resnext50_32x4d"
+# backbone = "se_resnext50_32x4d"
 # backbone = "resnext50_32x4d"
 # backbone = "resnet50"
 
@@ -249,12 +251,12 @@ def load_labels(split, index):
     return img
 
 
-labels = load_mask(split="train", index=1)
+masks = load_mask(split="train", index=1)
 labels = load_labels(split="train", index=1)
 
 fig, (ax1, ax2) = plt.subplots(1, 2)
 ax1.set_title("mask.png")
-ax1.imshow(labels, cmap='gray')
+ax1.imshow(masks, cmap='gray')
 ax2.set_title("inklabels.png")
 ax2.imshow(labels, cmap='gray')
 plt.show()
@@ -409,7 +411,7 @@ def is_in_masked_zone(location, mask):
 # In[14]:
 
 
-def generate_locations_ds(volume, mask):
+def generate_locations_ds(volume, mask, skip_zero):
     is_in_mask_train = lambda x: is_in_masked_zone(x, mask)
 
     # Create a list to store train locations
@@ -418,8 +420,10 @@ def generate_locations_ds(volume, mask):
     # Generate train locations
     volume_height, volume_width = volume.shape[:-1]
 
-    for y in range(BUFFER, volume_height - BUFFER, int(BUFFER / 1.5)):
-        for x in range(BUFFER, volume_width - BUFFER, int(BUFFER / 1.5)):
+    for y in range(BUFFER, volume_height - BUFFER, int(BUFFER / 2)):
+        for x in range(BUFFER, volume_width - BUFFER, int(BUFFER / 2)):
+            if skip_zero and np.all(volume[y - BUFFER : y + BUFFER, x - BUFFER : x + BUFFER] == 0):
+                continue
             if is_in_mask_train((y, x)):
                 locations.append((y, x))
 
@@ -518,12 +522,28 @@ def extract_subvolume(location, volume):
 # In[22]:
 
 
+def TTA(x:torch.Tensor,model:nn.Module):
+    #x.shape=(batch,c,h,w)
+    shape=x.shape
+    x=[x,*[torch.rot90(x,k=i,dims=(-2,-1)) for i in range(1,4)]]
+    x=torch.cat(x,dim=0)
+    x=model(x)
+    # x=torch.sigmoid(x)
+    x=x.reshape(4,shape[0],*shape[2:])
+    x=[torch.rot90(x[i],k=-i,dims=(-2,-1)) for i in range(4)]
+    x=torch.stack(x,dim=0)
+    return x.mean(0)
+
+
+# In[23]:
+
+
 data = np.array([[120, 24, 54]])
 out = A.ToFloat(max_value=2**8-1)(image=data)
 out["image"]
 
 
-# In[23]:
+# In[24]:
 
 
 out = A.FromFloat(max_value=2**8-1)(image=out["image"])
@@ -532,7 +552,7 @@ out["image"]
 
 # ## SubvolumeDataset
 
-# In[34]:
+# In[25]:
 
 
 import torch
@@ -548,10 +568,10 @@ class NormalizeTransform(ImageOnlyTransform):
     def apply(self, img, **params):
         median = np.full_like(img, all_median).astype(np.float32)
         mad = np.full_like(img, all_MAD).astype(np.float32)
-        # img = (img - median) / mad
-        # img = img / median
-        img = img / 255
-        img = (img - 0.45)/0.225
+        img = (img - median) / mad
+        img = img / median
+        # img = img / 255
+        # img = (img - 0.45)/0.225
         # img[img < 0] = 0
         return img
 
@@ -596,8 +616,7 @@ class SubvolumeDataset(Dataset):
             size = int(BUFFER * 2)
             performed = A.Compose([
                 # A.ToFloat(max_value=possible_max_input - possible_min_input),
-                # A.ToFloat(max_value=2**16-1),       
-                NormalizeTransform(always_apply=True),         
+                # A.ToFloat(max_value=2**16-1),                       
                 A.HorizontalFlip(p=0.5), # 水平方向に反転
                 A.VerticalFlip(p=0.5), # 水平方向に反転
                 A.RandomRotate90(p=0.5),
@@ -606,15 +625,16 @@ class SubvolumeDataset(Dataset):
                 # A.PadIfNeeded(min_height=size, min_width=size, always_apply=True, border_mode=0), # 必要に応じてパディングを追加
                 A.RandomCrop(height=int(size / 1.25), width=int(size / 1.25), p=0.5), # ランダムにクロップ, Moduleの中で計算する際に次元がバッチ内で揃っている必要があるので最後にサイズは揃える
                 # A.Perspective(p=0.5), # パースペクティブ変換                
-                A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
-                A.CoarseDropout(max_holes=1, max_width=int(size * 0.3), max_height=int(size * 0.3), 
-                                mask_fill_value=0, p=0.2),
+                # A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
+                # A.CoarseDropout(max_holes=1, max_width=int(size * 0.3), max_height=int(size * 0.3), 
+                #                 mask_fill_value=0, p=0.2),
                 A.OneOf([
                     # A.GaussNoise(var_limit=[1, 1]), # NG
-                    A.GaussianBlur(blur_limit=(3, 5)),
+                    A.GaussianBlur(blur_limit=(3, 5), p=1),
                     A.MotionBlur(blur_limit=5, p=1),
-                ], p=1),
-                A.Resize(BUFFER * 2, BUFFER * 2, always_apply=True),                
+                ], p=0.4),
+                A.Resize(BUFFER * 2, BUFFER * 2, always_apply=True),        
+                NormalizeTransform(always_apply=True),        
                 # A.Normalize(
                 #     mean= [0] * Z_DIM,
                 #     std= [1] * Z_DIM
@@ -675,7 +695,7 @@ class SubvolumeDataset(Dataset):
 # 
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[35]:
+# In[26]:
 
 
 def visualize_dataset_patches(locations_ds, labels, mode: str, fold = 0):
@@ -694,7 +714,7 @@ def visualize_dataset_patches(locations_ds, labels, mode: str, fold = 0):
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[26]:
+# In[27]:
 
 
 def trivial_baseline(dataset):
@@ -712,7 +732,7 @@ def trivial_baseline(dataset):
 
 # ## Dataset check
 
-# In[27]:
+# In[28]:
 
 
 all_volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1)
@@ -722,10 +742,10 @@ calculate_all_MAD(all_volume)
 calculate_all_median(all_volume)
 
 
-# In[36]:
+# In[29]:
 
 
-sample_locations = generate_locations_ds(volume_train_1, mask_train_1)
+sample_locations = generate_locations_ds(volume_train_1, mask_train_1, skip_zero=True)
 sample_ds = SubvolumeDataset(
     sample_locations,
     volume_train_1,
@@ -770,7 +790,7 @@ fig.show()  # Display all figures
 
 # ## Model
 
-# In[ ]:
+# In[63]:
 
 
 def dice_coef_torch(prob_preds, targets, beta=0.5, smooth=1e-5):
@@ -814,13 +834,13 @@ class Model(pl.LightningModule):
         #     # },
         #     **kwargs,
         # )
-        self.model = smp.UnetPlusPlus(
+        self.model = smp.Unet(
             encoder_name=encoder_name, 
             # encoder_weights="imagenet",
             encoder_weights="imagenet",
             # encoder_weights=None,
             encoder_depth=5,
-            decoder_channels=[1024, 256, 128, 64, 32],
+            decoder_channels=[512, 256, 128, 64, 32],
             in_channels=in_channels,
             classes=out_classes,
             # aux_params={
@@ -839,26 +859,29 @@ class Model(pl.LightningModule):
         # self.register_buffer("mean", torch.tensor(params["mean"]).view(1, 3, 1, 1))
 
         # for image segmentation dice loss could be the best first choice
-        self.segmentation_loss_fn = smp.losses.TverskyLoss(
-            smp.losses.BINARY_MODE,
-            log_loss=False,
-            from_logits=True,
-            smooth=1e-6,
-        )
-        # smp.losses.FocalLoss()
-        # self.segmentation_loss_fn = smp.losses.DiceLoss(
+        # self.segmentation_loss_fn = smp.losses.TverskyLoss(
         #     smp.losses.BINARY_MODE,
         #     log_loss=False,
         #     from_logits=True,
-        #     smooth=1e-6
+        #     smooth=1e-6,
         # )
+        # smp.losses.FocalLoss()
+        self.segmentation_loss_fn = smp.losses.DiceLoss(
+            smp.losses.BINARY_MODE,
+            log_loss=False,
+            from_logits=True,
+            smooth=1e-6
+        )
         # self.segmentation_loss_fn = dice_coef_torch
         # self.classification_loss_fn = smp.losses.SoftCrossEntropyLoss()
 
-    def forward(self, image):
+    def forward(self, image, stage):
         # normalize image here
         # image = (image - self.mean) / self.std
-        mask = self.model(image)
+        if stage != "train":
+            mask = TTA(image, self.model)
+        else:
+            mask = self.model(image)
         return mask
 
     def shared_step(self, batch, stage):
@@ -887,7 +910,7 @@ class Model(pl.LightningModule):
         # Check that mask values in between 0 and 1, NOT 0 and 255 for binary segmentation
         assert labels.max() <= 1.0 and labels.min() >= 0
 
-        segmentation_out = self.forward(image)
+        segmentation_out = self.forward(image, stage)
         # print("model out", segmentation_out)
         segmentation_out = segmentation_out.sigmoid()
         
@@ -922,7 +945,7 @@ class Model(pl.LightningModule):
         fp = torch.cat([x["fp"] for x in outputs])
         fn = torch.cat([x["fn"] for x in outputs])
         tn = torch.cat([x["tn"] for x in outputs])
-        loss = torch.sum(torch.Tensor([x["loss"] for x in outputs]))
+        loss = torch.mean(torch.Tensor([x["loss"] for x in outputs]))
 
         # per image IoU means that we first calculate IoU score for each image 
         # and then compute mean over these scores
@@ -939,9 +962,13 @@ class Model(pl.LightningModule):
             f"{stage}_per_image_iou": per_image_iou,
             f"{stage}_dataset_iou": dataset_iou,
             f"{stage}_loss": loss,
+            f"{stage}_tp": tp.sum().item(),
+            f"{stage}_fp": fp.sum().item(),
+            f"{stage}_fn": fn.sum().item(),
+            f"{stage}_tn": tn.sum().item(),
         }
         
-        self.log_dict(metrics, prog_bar=True)
+        self.log_dict(metrics, prog_bar=True, sync_dist=True)
 
     def training_step(self, batch, batch_idx):
         out = self.shared_step(batch, "train")
@@ -970,7 +997,7 @@ class Model(pl.LightningModule):
         
         loc_batch = loc_batch.long()
         patch_batch = patch_batch.float()
-        predictions: torch.Tensor = self.forward(patch_batch)
+        predictions: torch.Tensor = self.forward(patch_batch, "test")
         # print("predictions.shape", predictions.shape)
         # print("predictions", predictions)        
         predictions = predictions.sigmoid()
@@ -997,24 +1024,11 @@ class Model(pl.LightningModule):
         new_predictions_map = np.zeros_like(predictions_map[:, :, 0])[:, :, np.newaxis]
         new_predictions_map_counts = np.zeros_like(predictions_map_counts[:, :, 0])[:, :, np.newaxis]
         
-        for (y, x), pred in zip(locs, preds):
-            # print("index: ", index ,"x, y, pred", x.item(), y.item(), pred[BUFFER, BUFFER, :].item(), file=open('log.out', 'a'))
-            # print("pred", pred)
-            # predictions_map[
-            #     x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :
-            # ] = np.where(predictions_map[
-            #     x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :
-            # ] < pred, pred, predictions_map[
-            #     x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :
-            # ])
-            new_predictions_map[
-                x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :
-            ] += pred
-            new_predictions_map_counts[x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :] += 1
+        for (y, x), pred in zip(locs, preds):            
+            new_predictions_map[y - BUFFER : y + BUFFER, x - BUFFER : x + BUFFER, :] += pred
+            new_predictions_map_counts[y - BUFFER : y + BUFFER, x - BUFFER : x + BUFFER, :] += 1
         new_predictions_map /= (new_predictions_map_counts + exp)
-        new_predictions_map = xp.asarray(new_predictions_map[:, :, 0])
-        new_predictions_map: xp.ndarray = denoise_image(new_predictions_map, iter_num=250)
-        new_predictions_map = new_predictions_map.get()[:, :, np.newaxis]
+        new_predictions_map = new_predictions_map[:, :, np.newaxis]
         predictions_map = np.concatenate([predictions_map, new_predictions_map], axis=-1)
         print("new_predictions_map", new_predictions_map.shape)
         print("predictions_map", predictions_map.shape)
@@ -1023,24 +1037,22 @@ class Model(pl.LightningModule):
         optimizer = optim.Adam(self.parameters(), lr=lr)
         # Using a scheduler is optional but can be helpful.
         # The scheduler reduces the LR if the validation performance hasn't improved for the last N epochs
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.05, patience=5, min_lr=5e-5)
-        return {"optimizer": optimizer, "lr_scheduler": { "scheduler": scheduler, "monitor": "valid_dataset_iou" }}
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.1, patience=8, min_lr=5e-5)
+        return {"optimizer": optimizer, "lr_scheduler": { "scheduler": scheduler, "monitor": "valid_tp" }}
 
 
-# In[ ]:
+# In[64]:
 
 
 volume_train_1.shape, labels_train_1.shape, mask_train_1.shape
 
 
-# In[ ]:
+# # !export CUDA_LAUNCH_BLOCKING=1
+# # !export TORCH_USE_CUDA_DSA=1
 
+# 
 
-# !export CUDA_LAUNCH_BLOCKING=1
-# !export TORCH_USE_CUDA_DSA=1
-
-
-# In[ ]:
+# In[65]:
 
 
 k_folds = 3
@@ -1086,8 +1098,8 @@ for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
     # val_label = np.concatenate(val_label, axis=1)
     # val_mask = np.concatenate(val_mask, axis=1)
     
-    train_locations_ds = generate_locations_ds(train_volume, train_mask)
-    val_location_ds = generate_locations_ds(val_volume, val_mask)       
+    train_locations_ds = generate_locations_ds(train_volume, train_mask, skip_zero=True)
+    val_location_ds = generate_locations_ds(val_volume, val_mask, skip_zero=False)       
 
     visualize_dataset_patches(train_locations_ds, train_label, "train", fold)
     visualize_dataset_patches(val_location_ds, val_label, "val", fold)
@@ -1106,6 +1118,9 @@ for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
         accelerator="auto",
         # strategy="ddp_find_unused_parameters_false",
         # strategy="ddp_fork",
+        logger=WandbLogger(
+            name="2.5dimension"
+        ),
     )
     
     # Sample elements randomly from a given list of ids, no replacement.
@@ -1123,7 +1138,7 @@ for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
         BUFFER,
         is_train=False,
     )
-    
+
     # Define data loaders for training and testing data in this fold
     train_loader = torch.utils.data.DataLoader(
         train_ds, 
