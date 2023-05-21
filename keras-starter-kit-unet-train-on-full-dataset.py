@@ -52,18 +52,18 @@ import torch.utils.data
 # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
 # DATA_DIR = '/home/fummicc1/codes/competitions/kaggle-ink-detection'
 DATA_DIR = "/home/fummicc1/codes/Kaggle/kaggle-ink-detection"
-BUFFER = 112  # Half-size of papyrus patches we'll use as model inputs
+BUFFER = 80  # Half-size of papyrus patches we'll use as model inputs
 # Z_LIST = list(range(0, 20, 5)) + list(range(22, 34))  # Offset of slices in the z direction
-Z_LIST = [16, 32, 40]  # Offset of slices in the z direction
+Z_LIST = list(range(32 - 6, 32 + 6))  # Offset of slices in the z direction
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
 SHARED_HEIGHT = 4000  # Max height to resize all papyrii
 
 # Model config
 BATCH_SIZE = 64
 
-backbone = "mit_b2"
+# backbone = "mit_b2"
 # backbone = "efficientnet-b5"
-# backbone = "se_resnext50_32x4d"
+backbone = "se_resnext101_32x4d"
 # backbone = "resnext50_32x4d"
 # backbone = "resnet50"
 
@@ -363,7 +363,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"total volume: {volume.shape}")
 
 
-# In[10]:
+# In[ ]:
 
 
 # # labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -374,7 +374,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[11]:
+# In[ ]:
 
 
 # # Free up memory
@@ -390,7 +390,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 #
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[12]:
+# In[ ]:
 
 
 # fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -404,14 +404,14 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # ## Create a dataset in the input volume
 #
 
-# In[13]:
+# In[ ]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[14]:
+# In[ ]:
 
 
 def generate_locations_ds(volume, mask, skip_zero):
@@ -441,13 +441,13 @@ def generate_locations_ds(volume, mask, skip_zero):
 #
 # Sanity check visually that our patches are where they should be.
 
-# In[15]:
+# In[ ]:
 
 
 possible_min_input = possible_max_input = all_median = all_MAD = None
 
 
-# In[16]:
+# In[ ]:
 
 
 from scipy.stats import median_abs_deviation
@@ -459,7 +459,7 @@ def calculate_all_MAD(volume):
     print("all_MAD", all_MAD)
 
 
-# In[17]:
+# In[ ]:
 
 
 def calculate_all_median(volume):
@@ -468,7 +468,7 @@ def calculate_all_median(volume):
     print("all_median", all_median)
 
 
-# In[18]:
+# In[ ]:
 
 
 def calculate_possibles(all_median, all_MAD):
@@ -479,21 +479,21 @@ def calculate_possibles(all_median, all_MAD):
     possible_min_input = 0
 
 
-# In[19]:
+# In[ ]:
 
 
 print("all_median", all_median)
 "all_median", all_median
 
 
-# In[20]:
+# In[ ]:
 
 
 print("all_MAD", all_MAD)
 "all_MAD", all_MAD
 
 
-# In[21]:
+# In[ ]:
 
 
 printed = True
@@ -527,7 +527,7 @@ def extract_subvolume(location, volume):
     return subvolume
 
 
-# In[22]:
+# In[ ]:
 
 
 def TTA(x: torch.Tensor, model: nn.Module):
@@ -543,7 +543,7 @@ def TTA(x: torch.Tensor, model: nn.Module):
     return x.mean(0)
 
 
-# In[23]:
+# In[ ]:
 
 
 data = np.array([[120, 24, 54]])
@@ -551,7 +551,7 @@ out = A.ToFloat(max_value=2**8 - 1)(image=data)
 out["image"]
 
 
-# In[24]:
+# In[ ]:
 
 
 out = A.FromFloat(max_value=2**8 - 1)(image=out["image"])
@@ -560,7 +560,7 @@ out["image"]
 
 # ## SubvolumeDataset
 
-# In[25]:
+# In[ ]:
 
 
 import torch
@@ -724,7 +724,7 @@ class SubvolumeDataset(Dataset):
 #
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[26]:
+# In[ ]:
 
 
 def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
@@ -750,7 +750,7 @@ def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[27]:
+# In[ ]:
 
 
 def trivial_baseline(dataset):
@@ -769,7 +769,7 @@ def trivial_baseline(dataset):
 
 # ## Dataset check
 
-# In[28]:
+# In[ ]:
 
 
 all_volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1)
@@ -779,7 +779,7 @@ calculate_all_MAD(all_volume)
 calculate_all_median(all_volume)
 
 
-# In[29]:
+# In[ ]:
 
 
 sample_locations = generate_locations_ds(volume_train_1, mask_train_1, skip_zero=True)
@@ -941,8 +941,8 @@ class Model(pl.LightningModule):
         assert labels.max() <= 1.0 and labels.min() >= 0
 
         segmentation_out = self.forward(image, stage)
-        if len(segmentation_out.shape) == 3:
-            segmentation_out = segmentation_out.unsqueeze(dim=1)
+        # if len(segmentation_out.shape) == 3:
+        #     segmentation_out = segmentation_out.unsqueeze(dim=1)
         # print("model out shape", segmentation_out.shape)
         segmentation_out = segmentation_out.sigmoid()
         # print("model out shape after sigmoid", segmentation_out.shape)
@@ -1000,10 +1000,10 @@ class Model(pl.LightningModule):
             f"{stage}_per_image_iou": per_image_iou,
             f"{stage}_dataset_iou": dataset_iou,
             f"{stage}_loss": loss,
-            f"{stage}_tp": tp.sum().item(),
-            f"{stage}_fp": fp.sum().item(),
-            f"{stage}_fn": fn.sum().item(),
-            f"{stage}_tn": tn.sum().item(),
+            f"{stage}_tp": tp.sum().int().item(),
+            f"{stage}_fp": fp.sum().int().item(),
+            f"{stage}_fn": fn.sum().int().item(),
+            f"{stage}_tn": tn.sum().int().item(),
         }
 
         self.log_dict(metrics, prog_bar=True, sync_dist=True)
