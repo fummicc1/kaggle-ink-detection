@@ -817,26 +817,21 @@ class Model(pl.LightningModule):
 
     def __init__(self, encoder_name, in_channels, out_classes, **kwargs):
         super().__init__()
-        # self.model = smp.UnetPlusPlus(
-        #     encoder_name=encoder_name, 
-        #     # encoder_weights="imagenet",
-        #     encoder_weights="swsl",
-        #     # encoder_weights=None,
-        #     encoder_depth=5,
-        #     decoder_channels=[512, 256, 128, 64, 32],
-        #     in_channels=in_channels,
-        #     classes=out_classes,
-        #     # aux_params={
-        #     #     "pooling": "max",
-        #     #     "classes": out_classes,
-        #     #     "dropout": 0.2,
-        #     #     "activation": None,
-        #     # },
-        #     **kwargs,
-        # )
+        if in_channels != 3 and "mit" in encoder_name:
+            self.initial_conv = nn.Sequential(
+                nn.Conv2d(
+                    in_channels, 
+                    3, 
+                    kernel_size=1, 
+                    stride=1, 
+                    padding=0
+                ),                
+            )
+        else:
+            self.initial_conv = nn.Identity()
+
         self.model = smp.Unet(
             encoder_name=encoder_name, 
-            # encoder_weights="imagenet",
             encoder_weights="imagenet",
             # encoder_weights=None,
             encoder_depth=5,
@@ -850,6 +845,11 @@ class Model(pl.LightningModule):
             #     "activation": None,
             # },
             **kwargs,
+        )
+        
+        self.all_model = nn.Sequential(
+            self.initial_conv,
+            self.model,
         )
         
         
@@ -877,11 +877,11 @@ class Model(pl.LightningModule):
 
     def forward(self, image, stage):
         # normalize image here
-        # image = (image - self.mean) / self.std
+        # image = (image - self.mean) / self.std        
         if stage != "train":
-            mask = TTA(image, self.model)
+            mask = TTA(image, self.all_model)
         else:
-            mask = self.model(image)
+            mask = self.all_model(image)
         return mask
 
     def shared_step(self, batch, stage):
