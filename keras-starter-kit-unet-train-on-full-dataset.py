@@ -54,14 +54,14 @@ import torch.utils.data
 DATA_DIR = "/home/fummicc1/codes/Kaggle/kaggle-ink-detection"
 BUFFER = 112  # Half-size of papyrus patches we'll use as model inputs
 # Z_LIST = list(range(0, 20, 5)) + list(range(22, 34))  # Offset of slices in the z direction
-Z_LIST = list(range(32 - 6, 32 + 6))  # Offset of slices in the z direction
+Z_LIST = [16, 32, 40]  # Offset of slices in the z direction
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
 SHARED_HEIGHT = 4000  # Max height to resize all papyrii
 
 # Model config
-BATCH_SIZE = 16
+BATCH_SIZE = 64
 
-backbone = "mit_b1"
+backbone = "mit_b2"
 # backbone = "efficientnet-b5"
 # backbone = "se_resnext50_32x4d"
 # backbone = "resnext50_32x4d"
@@ -863,12 +863,7 @@ class Model(pl.LightningModule):
 
     def __init__(self, encoder_name, in_channels, out_classes, **kwargs):
         super().__init__()
-        if "mit" in encoder_name:
-            self.initial_conv = nn.Sequential(
-                nn.Conv2d(in_channels, 3, kernel_size=1, stride=1, padding=0),
-            )
-        else:
-            self.initial_conv = nn.Identity()
+        self.initial_conv = nn.Identity()
 
         self.model = smp.Unet(
             encoder_name=encoder_name,
@@ -876,7 +871,7 @@ class Model(pl.LightningModule):
             # encoder_weights=None,
             encoder_depth=5,
             decoder_channels=[512, 256, 128, 64, 32],
-            in_channels=3 if "mit" in encoder_name else in_channels,
+            in_channels=in_channels,
             classes=out_classes,
             # aux_params={
             #     "pooling": "max",
