@@ -81,7 +81,7 @@ class CFG:
     # comp_dataset_path = f'{comp_dir_path}datasets/{comp_folder_name}/'
     comp_dataset_path = f'{comp_dir_path}{comp_folder_name}/'
     
-    exp_name = 'vesuvius_2d_slide_exp002'
+    exp_name = 'vesuvius_2d_slide_exp003'
 
     # ============== pred target =============
     target_size = 1
@@ -96,7 +96,7 @@ class CFG:
 
     in_chans = 12 # 65
     # ============== training cfg =============
-    prd_size=224
+    prd_size=320
     stride = prd_size // 4
     reisze_height = 4000
 
@@ -248,8 +248,8 @@ class CustomDataset(Dataset):
                 A.ShiftScaleRotate(p=0.5, border_mode=0), # シフト、スケーリング、回転
                 A.RandomCrop(height=int(size / 1.25), width=int(size / 1.25), p=0.5), # ランダムにクロップ, Moduleの中で計算する際に次元がバッチ内で揃っている必要があるので最後にサイズは揃える
                 # A.GridDistortion(num_steps=5, distort_limit=0.3, p=0.5),
-                A.CoarseDropout(max_holes=1, max_width=int(size * 0.3), max_height=int(size * 0.3), 
-                                mask_fill_value=0, p=0.2),
+                # A.CoarseDropout(max_holes=1, max_width=int(size * 0.3), max_height=int(size * 0.3), 
+                                # mask_fill_value=0, p=0.2),
                 A.OneOf([
                     A.GaussianBlur(blur_limit=(3, 5)),
                     A.MotionBlur(blur_limit=5, p=1),

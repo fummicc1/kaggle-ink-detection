@@ -363,7 +363,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"total volume: {volume.shape}")
 
 
-# In[ ]:
+# In[10]:
 
 
 # # labels = np.concatenate([labels_train_1, labels_train_2, labels_train_3], axis=1)
@@ -374,7 +374,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # print(f"mask: {mask.shape}, {mask.dtype}")
 
 
-# In[ ]:
+# In[11]:
 
 
 # # Free up memory
@@ -390,7 +390,7 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 #
 # In this case, not very informative. But remember to always visualize what you're training on, as a sanity check!
 
-# In[ ]:
+# In[12]:
 
 
 # fig, axes = plt.subplots(1, 2, figsize=(15, 3))
@@ -404,14 +404,14 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # ## Create a dataset in the input volume
 #
 
-# In[ ]:
+# In[13]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[ ]:
+# In[14]:
 
 
 def generate_locations_ds(volume, mask, skip_zero):
@@ -441,13 +441,13 @@ def generate_locations_ds(volume, mask, skip_zero):
 #
 # Sanity check visually that our patches are where they should be.
 
-# In[ ]:
+# In[15]:
 
 
 possible_min_input = possible_max_input = all_median = all_MAD = None
 
 
-# In[ ]:
+# In[16]:
 
 
 from scipy.stats import median_abs_deviation
@@ -459,7 +459,7 @@ def calculate_all_MAD(volume):
     print("all_MAD", all_MAD)
 
 
-# In[ ]:
+# In[17]:
 
 
 def calculate_all_median(volume):
@@ -468,7 +468,7 @@ def calculate_all_median(volume):
     print("all_median", all_median)
 
 
-# In[ ]:
+# In[18]:
 
 
 def calculate_possibles(all_median, all_MAD):
@@ -479,21 +479,21 @@ def calculate_possibles(all_median, all_MAD):
     possible_min_input = 0
 
 
-# In[ ]:
+# In[19]:
 
 
 print("all_median", all_median)
 "all_median", all_median
 
 
-# In[ ]:
+# In[20]:
 
 
 print("all_MAD", all_MAD)
 "all_MAD", all_MAD
 
 
-# In[ ]:
+# In[21]:
 
 
 printed = True
@@ -527,7 +527,7 @@ def extract_subvolume(location, volume):
     return subvolume
 
 
-# In[ ]:
+# In[22]:
 
 
 def TTA(x: torch.Tensor, model: nn.Module):
@@ -536,14 +536,14 @@ def TTA(x: torch.Tensor, model: nn.Module):
     x = [x, *[torch.rot90(x, k=i, dims=(-2, -1)) for i in range(1, 4)]]
     x = torch.cat(x, dim=0)
     x = model(x)
-    # x=torch.sigmoid(x)
-    x = x.reshape(4, shape[0], *shape[2:])
+    x = torch.sigmoid(x)
+    x = x.reshape(4, shape[0], 1, *shape[2:])
     x = [torch.rot90(x[i], k=-i, dims=(-2, -1)) for i in range(4)]
     x = torch.stack(x, dim=0)
     return x.mean(0)
 
 
-# In[ ]:
+# In[23]:
 
 
 data = np.array([[120, 24, 54]])
@@ -551,7 +551,7 @@ out = A.ToFloat(max_value=2**8 - 1)(image=data)
 out["image"]
 
 
-# In[ ]:
+# In[24]:
 
 
 out = A.FromFloat(max_value=2**8 - 1)(image=out["image"])
@@ -560,7 +560,7 @@ out["image"]
 
 # ## SubvolumeDataset
 
-# In[ ]:
+# In[25]:
 
 
 import torch
@@ -724,7 +724,7 @@ class SubvolumeDataset(Dataset):
 #
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[ ]:
+# In[26]:
 
 
 def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
@@ -750,7 +750,7 @@ def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
 # This is the highest validation score you can reach without looking at the inputs.
 # The model can be considered to have statistical power only if it can beat this baseline.
 
-# In[ ]:
+# In[27]:
 
 
 def trivial_baseline(dataset):
@@ -769,7 +769,7 @@ def trivial_baseline(dataset):
 
 # ## Dataset check
 
-# In[ ]:
+# In[28]:
 
 
 all_volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1)
@@ -779,7 +779,7 @@ calculate_all_MAD(all_volume)
 calculate_all_median(all_volume)
 
 
-# In[ ]:
+# In[29]:
 
 
 sample_locations = generate_locations_ds(volume_train_1, mask_train_1, skip_zero=True)
@@ -863,7 +863,6 @@ class Model(pl.LightningModule):
 
     def __init__(self, encoder_name, in_channels, out_classes, **kwargs):
         super().__init__()
-        self.initial_conv = nn.Identity()
 
         self.model = smp.Unet(
             encoder_name=encoder_name,
@@ -880,11 +879,6 @@ class Model(pl.LightningModule):
             #     "activation": None,
             # },
             **kwargs,
-        )
-
-        self.all_model = nn.Sequential(
-            self.initial_conv,
-            self.model,
         )
 
         # preprocessing parameteres for image
@@ -910,9 +904,9 @@ class Model(pl.LightningModule):
         # normalize image here
         # image = (image - self.mean) / self.std
         if stage != "train":
-            mask = TTA(image, self.all_model)
+            mask = TTA(image, self.model)
         else:
-            mask = self.all_model(image)
+            mask = self.model(image)
         return mask
 
     def shared_step(self, batch, stage):
@@ -944,11 +938,18 @@ class Model(pl.LightningModule):
         # if len(segmentation_out.shape) == 3:
         #     segmentation_out = segmentation_out.unsqueeze(dim=1)
         # print("model out shape", segmentation_out.shape)
-        segmentation_out = segmentation_out.sigmoid()
+        if stage == "train":
+            segmentation_out = segmentation_out.sigmoid()
         # print("model out shape after sigmoid", segmentation_out.shape)
         # print("label shape", labels.shape)
 
         # Predicted mask contains logits, and loss_fn param `from_logits` is set to True
+        # print(
+        #     "labels.shape",
+        #     labels.shape,
+        #     "segmentation_out.shape",
+        #     segmentation_out.shape,
+        # )
         loss = self.segmentation_loss_fn(segmentation_out, labels)
 
         # Lets compute metrics for some threshold
@@ -1038,7 +1039,7 @@ class Model(pl.LightningModule):
         predictions: torch.Tensor = self.forward(patch_batch, "test")
         # print("predictions.shape", predictions.shape)
         # print("predictions", predictions)
-        predictions = predictions.sigmoid()
+        # predictions = predictions.sigmoid()
         # print("Softmaxed predictions where conf is gt threshold", predictions[predictions.gt(threshold)])
         # print("predictions.shape after sigmoid", predictions.shape)
         # →(BATCH, W, H, C)
@@ -1166,7 +1167,7 @@ for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
         max_epochs=num_epochs,
         devices="auto",
         accelerator="auto",
-        strategy="ddp_find_unused_parameters_false",
+        # strategy="ddp_find_unused_parameters_false",
         # strategy="ddp_fork",
         logger=WandbLogger(name="2.5dimension"),
     )
