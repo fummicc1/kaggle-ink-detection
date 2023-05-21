@@ -945,7 +945,9 @@ class Model(pl.LightningModule):
         # Check that mask values in between 0 and 1, NOT 0 and 255 for binary segmentation
         assert labels.max() <= 1.0 and labels.min() >= 0
 
-        segmentation_out = self.forward(image, stage).unsqueeze(dim=1)
+        segmentation_out = self.forward(image, stage)
+        if len(segmentation_out.shape) == 3:
+            segmentation_out = segmentation_out.unsqueeze(dim=1)
         # print("model out shape", segmentation_out.shape)
         segmentation_out = segmentation_out.sigmoid()
         # print("model out shape after sigmoid", segmentation_out.shape)
