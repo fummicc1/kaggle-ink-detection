@@ -16,3 +16,8 @@ train/
 lightning_logs*
 weights
 *.log
+logs
+train-1.zarr
+train-2.zarr
+train-3.zarr
+*.mp4
