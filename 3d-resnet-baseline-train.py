@@ -94,13 +94,13 @@ class CFG:
     # backbone = 'resnext50_32x4d'
     pretrained = True
 
-    in_chans = 48  # 65
+    in_chans = 40  # 65
     # ============== training cfg =============
-    prd_size = 128
+    prd_size = 160
     stride = prd_size // 4
-    reisze_height = 2400
+    reisze_height = 3200
 
-    batch_size = 64  # 32
+    batch_size = 32  # 32
     use_amp = True
 
     seed = 42
@@ -108,7 +108,7 @@ class CFG:
 
     mode = "train"
 
-    device_ids = [0, 1, 2, 3]
+    device_ids = [0, 1, 2]
 
     lr = 1e-3
     epochs = 10
@@ -731,7 +731,7 @@ def train(fragment_id):
     trainer = pl.Trainer(
         max_epochs=CFG.epochs,
         devices="auto",
-        accelerator="auto",
+        accelerator="gpu",
         strategy="ddp_find_unused_parameters_false",
         logger=WandbLogger(name=CFG.exp_name),
     )

@@ -1,0 +1,6 @@
+Collecting sentry-sdk
+  Using cached sentry_sdk-1.23.1-py2.py3-none-any.whl (205 kB)
+Requirement already satisfied: urllib3<2.0.0 in /home/fummicc1/anaconda3/lib/python3.8/site-packages (from sentry-sdk) (1.26.15)
+Requirement already satisfied: certifi in /home/fummicc1/anaconda3/lib/python3.8/site-packages (from sentry-sdk) (2020.12.5)
+Installing collected packages: sentry-sdk
+Successfully installed sentry-sdk-1.23.1
