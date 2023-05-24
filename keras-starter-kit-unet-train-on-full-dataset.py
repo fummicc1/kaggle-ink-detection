@@ -50,9 +50,9 @@ import torch.utils.data
 # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
 # DATA_DIR = '/home/fummicc1/codes/competitions/kaggle-ink-detection'
 DATA_DIR = '/home/fummicc1/codes/Kaggle/kaggle-ink-detection'
-BUFFER = 112 # Half-size of papyrus patches we'll use as model inputs
+BUFFER = 128 # Half-size of papyrus patches we'll use as model inputs
 # Z_LIST = list(range(0, 20, 5)) + list(range(22, 34))  # Offset of slices in the z direction
-Z_LIST = list(range(22, 34))  # Offset of slices in the z direction
+Z_LIST = list(range(0, 48, 4))  # Offset of slices in the z direction
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
 SHARED_HEIGHT = 4000  # Max height to resize all papyrii
 
@@ -71,8 +71,8 @@ num_workers = 8
 exp = 1e-7
 mask_padding = 200
 
-num_epochs = 30
-lr = 1e-3
+num_epochs = 80
+lr = 5e-4
 
 pytorch_lightning.seed_everything(seed=42)
 torch.set_float32_matmul_precision('high')
@@ -350,12 +350,27 @@ class SubvolumeDataset(Dataset):
         
         if self.is_train and label is not None:
             transformed = A.Compose([
-                A.HorizontalFlip(p=0.2),
-                A.VerticalFlip(p=0.2),
-                A.RandomScale(p=0.2),
-                A.RandomRotate90(p=0.2),
-                A.ShiftScaleRotate(p=0.2),
-                A.Resize(height=BUFFER * 2, width=BUFFER * 2),
+                A.HorizontalFlip(p=0.5),
+                A.VerticalFlip(p=0.5),
+                A.RandomScale(p=0.5),
+                A.RandomRotate90(p=0.5),
+                A.ShiftScaleRotate(p=0.75),
+                A.OneOf(
+                    [
+                        A.GaussNoise(var_limit=[10, 50]),
+                        A.GaussianBlur(),
+                        A.MotionBlur(),
+                    ],
+                    p=0.4,
+                ),
+                A.CoarseDropout(
+                    max_holes=1,
+                    max_width=int(self.buffer * 0.3),
+                    max_height=int(self.buffer * 0.3),
+                    mask_fill_value=0,
+                    p=0.5,
+                ),
+                A.Resize(height=self.buffer * 2, width=self.buffer * 2),
             ])(image=subvolume, mask=label)
             subvolume = transformed["image"]
             label = transformed["mask"]
@@ -484,7 +499,7 @@ class Model(pl.LightningModule):
             log_loss=False, 
             from_logits=True, 
             smooth=1e-6,
-            alpha=0.5,
+            alpha=0.5 ,
             beta=0.7,
         )
         # self.segmentation_loss_fn = dice_coef_torch
@@ -585,7 +600,7 @@ class Model(pl.LightningModule):
         patch_batch = patch_batch.float()
         predictions: torch.Tensor = self.forward(patch_batch, "test")
  
-        predictions = torch.permute(predictions, (0, 3, 2, 1))
+        predictions = torch.permute(predictions, (0, 2, 3, 1)).squeeze(dim=-1)
         predictions = (
             predictions.cpu().numpy()
         )
