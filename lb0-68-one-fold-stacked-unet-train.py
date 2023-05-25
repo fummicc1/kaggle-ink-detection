@@ -1052,7 +1052,7 @@ def train_one(fragment_id, d, val_d):
         devices="0,1,2,3",
         max_epochs=CFG.epochs,
         logger=WandbLogger(name=f"2.5d-stack-unet-{datetime.datetime.now()}"),
-        strategy="ddp_find_unused_parameters_true",
+        # strategy="ddp_find_unused_parameters_true",
     )
     trainer.fit(
         net,
@@ -1067,8 +1067,8 @@ def train_one(fragment_id, d, val_d):
 
 # In[ ]:
 
-
-for t, fragment_id in enumerate(train_id):
-    d = read_data1(fragment_id)
-    val_d = read_data1(valid_id[0])
-    train_one(fragment_id, d, val_d)
+if __name__ == "__main__":
+    for t, fragment_id in enumerate(train_id):
+        d = read_data1(fragment_id)
+        val_d = read_data1(valid_id[0])
+        train_one(fragment_id, d, val_d)
