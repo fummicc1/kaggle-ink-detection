@@ -523,10 +523,7 @@ class Model(pl.LightningModule):
         self.model = model
 
         self.segmentation_loss_fn = smp.losses.TverskyLoss(
-            smp.losses.BINARY_MODE,
-            log_loss=False,
-            from_logits=True,
-            smooth=1e-6,
+            smp.losses.BINARY_MODE, log_loss=False, from_logits=True, smooth=1e-6,
         )
 
     def forward(self, image):

@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[1]:
+# In[133]:
 
 
 import numpy as np
@@ -13,7 +13,6 @@ import torch
 import torch.nn as nn
 import torchvision
 import datetime
-
 
 # import cupy
 import albumentations as A
@@ -56,35 +55,34 @@ import torch.utils.data
 DATA_DIR = "/home/fummicc1/codes/Kaggle/kaggle-ink-detection"
 BUFFER = 128  # Half-size of papyrus patches we'll use as model inputs
 # Z_LIST = list(range(0, 20, 5)) + list(range(22, 34))  # Offset of slices in the z direction
-Z_LIST = (
-    list(range(0, 24, 8)) + list(range(24, 36, 2)) + list(range(36, 64, 10))
-)  # Offset of slices in the z direction
+Z_LIST = list(range(24, 36))
+# Z_LIST = list(range(0, 24, 8)) + list(range(24, 36, 2)) + list(range(36, 64, 10))
 Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
-SHARED_HEIGHT = 4000  # Max height to resize all papyrii
+SHARED_HEIGHT = 3200  # Max height to resize all papyrii
 
 # Model config
 BATCH_SIZE = 64
 
 # backbone = "mit_b2"
 # backbone = "efficientnet-b5"
-# backbone = "se_resnext101_32x4d"
-backbone = "resnext50_32x4d"
+backbone = "se_resnext50_32x4d"
+# backbone = "resnext50_32x4d"
 # backbone = "resnet50"
 
 device = torch.device("cuda")
-threshold = 0.5
+threshold = 0.45
 num_workers = 8
 exp = 1e-7
-mask_padding = 400
+mask_padding = 200
 
 num_epochs = 50
-lr = 5e-4
+lr = 1e-3
 
 pytorch_lightning.seed_everything(seed=42)
 torch.set_float32_matmul_precision("high")
 
 
-# In[2]:
+# In[134]:
 
 
 # plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
@@ -96,12 +94,14 @@ plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
 
 # ## Load up the training data
 
-# In[3]:
+# In[135]:
 
 
 def resize(img):
     current_height, current_width = img.shape
     aspect_ratio = current_width / current_height
+    if SHARED_HEIGHT is None:
+        return img
     new_height = SHARED_HEIGHT
     new_width = int(SHARED_HEIGHT * aspect_ratio)
     new_size = (new_width, new_height)
@@ -137,7 +137,7 @@ ax2.imshow(labels, cmap="gray")
 plt.show()
 
 
-# In[4]:
+# In[136]:
 
 
 # input shape: (H, W, C)
@@ -155,7 +155,7 @@ def rotate90(volume: np.ndarray, k=None, reverse=False):
     return resize_ski(volume, (new_height, new_width, volume.shape[2]))
 
 
-# In[5]:
+# In[137]:
 
 
 mask_test_a = load_mask(split="test", index="a")
@@ -183,7 +183,7 @@ print(f"mask_train_3: {mask_train_3.shape}")
 print(f"labels_train_3: {labels_train_3.shape}")
 
 
-# In[ ]:
+# In[138]:
 
 
 fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
@@ -200,7 +200,7 @@ plt.tight_layout()
 plt.show()
 
 
-# In[ ]:
+# In[139]:
 
 
 def load_volume(split, index):
@@ -218,7 +218,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[ ]:
+# In[140]:
 
 
 volume_train_1 = load_volume(split="train", index=1)
@@ -238,17 +238,17 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # ## Create a dataset in the input volume
 #
 
-# In[ ]:
+# In[141]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[ ]:
+# In[142]:
 
 
-def generate_locations_ds(volume, mask, skip_zero):
+def generate_locations_ds(volume, mask, label=None, skip_zero=False):
     is_in_mask_train = lambda x: is_in_masked_zone(x, mask)
 
     # Create a list to store train locations
@@ -259,8 +259,10 @@ def generate_locations_ds(volume, mask, skip_zero):
 
     for y in range(BUFFER, volume_height - BUFFER, int(BUFFER / 2)):
         for x in range(BUFFER, volume_width - BUFFER, int(BUFFER / 2)):
-            if skip_zero and np.all(
-                volume[y - BUFFER : y + BUFFER, x - BUFFER : x + BUFFER] == 0
+            if (
+                skip_zero
+                and label is not None
+                and np.all(label[y - BUFFER : y + BUFFER, x - BUFFER : x + BUFFER] == 0)
             ):
                 continue
             if is_in_mask_train((y, x)):
@@ -275,7 +277,7 @@ def generate_locations_ds(volume, mask, skip_zero):
 #
 # Sanity check visually that our patches are where they should be.
 
-# In[ ]:
+# In[143]:
 
 
 def extract_subvolume(location, volume):
@@ -289,24 +291,13 @@ def extract_subvolume(location, volume):
     return subvolume
 
 
-# In[ ]:
+# In[144]:
 
 
 import torch
 import numpy as np
 
-x = torch.from_numpy(
-    np.array(
-        [
-            [
-                [
-                    [1, 2],
-                    [2, 9],
-                ]
-            ]
-        ]
-    )
-)
+x = torch.from_numpy(np.array([[[[1, 2], [2, 9],]]]))
 shape = x.shape
 print(x.shape)
 x = [x, *[torch.rot90(x, k=i, dims=(-2, -1)) for i in range(1, 4)]]
@@ -320,7 +311,7 @@ print(x.shape)
 x.mean(0, dtype=torch.float32, keepdim=True).shape
 
 
-# In[ ]:
+# In[145]:
 
 
 tc = torch
@@ -341,7 +332,7 @@ def TTA(x: tc.Tensor, model: nn.Module):
 
 # ## SubvolumeDataset
 
-# In[ ]:
+# In[146]:
 
 
 import torch
@@ -389,24 +380,19 @@ class SubvolumeDataset(Dataset):
                 [
                     A.HorizontalFlip(p=0.5),
                     A.VerticalFlip(p=0.5),
+                    A.Transpose(p=0.5),
                     A.RandomScale(p=0.5),
                     A.RandomRotate90(p=0.5),
                     A.ShiftScaleRotate(p=0.75),
-                    A.OneOf(
-                        [
-                            A.GaussNoise(var_limit=[10, 50]),
-                            A.GaussianBlur(),
-                            A.MotionBlur(),
-                        ],
-                        p=0.4,
-                    ),
-                    A.CoarseDropout(
-                        max_holes=1,
-                        max_width=int(self.buffer * 0.3),
-                        max_height=int(self.buffer * 0.3),
-                        mask_fill_value=0,
-                        p=0.5,
-                    ),
+                    # A.GridDistortion(p=0.1),
+                    # A.CoarseDropout(
+                    #     max_holes=1,
+                    #     max_width=int(self.buffer * 0.3),
+                    #     max_height=int(self.buffer * 0.3),
+                    #     mask_fill_value=0,
+                    #     p=0.5,
+                    # ),
+                    A.GridDropout(p=0.15),
                     A.Resize(height=self.buffer * 2, width=self.buffer * 2),
                 ]
             )(image=subvolume, mask=label)
@@ -436,7 +422,7 @@ class SubvolumeDataset(Dataset):
 #
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[ ]:
+# In[147]:
 
 
 def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
@@ -464,19 +450,17 @@ def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
 
 # ## Dataset check
 
-# In[ ]:
+# In[148]:
 
 
-sample_locations = generate_locations_ds(volume_train_1, mask_train_1, skip_zero=True)
+sample_locations = generate_locations_ds(
+    volume_train_1, mask_train_1, labels_train_1, skip_zero=True
+)
 sample_ds = SubvolumeDataset(
-    sample_locations,
-    volume_train_1,
-    labels_train_1,
-    BUFFER,
-    is_train=True,
+    sample_locations, volume_train_1, labels_train_1, BUFFER, is_train=True,
 )
 
-img = sample_ds[150][0][10, :, :]
+img = sample_ds[148][0][10, :, :]
 plt.imshow(img)
 
 fig, ax = plt.subplots(figsize=(8, 6))
@@ -498,7 +482,7 @@ plt.show()
 fig, ax = plt.subplots(Z_DIM, 1, figsize=(12, 24))
 
 for i in range(Z_DIM):
-    img, _ = sample_ds[150]
+    img, _ = sample_ds[148]
     img = img[i, :, :]
     ax[i].hist(img.flatten(), bins=1000)  # Plot histogram of the flattened data
     ax[i].set_title(f"Histogram of Channel {i}")  # Add title to the plot
@@ -508,7 +492,30 @@ fig.show()
 
 # ## Model
 
-# In[ ]:
+# In[149]:
+
+
+# ref - https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/397288
+def fbeta_score(preds, targets, threshold, beta=0.5, smooth=1e-5):
+    preds_t = torch.where(preds > threshold, 1.0, 0.0).float()
+    y_true_count = targets.sum()
+
+    ctp = preds_t[targets == 1].sum()
+    cfp = preds_t[targets == 0].sum()
+    beta_squared = beta * beta
+
+    c_precision = ctp / (ctp + cfp + smooth)
+    c_recall = ctp / (y_true_count + smooth)
+    dice = (
+        (1 + beta_squared)
+        * (c_precision * c_recall)
+        / (beta_squared * c_precision + c_recall + smooth)
+    )
+
+    return dice
+
+
+# In[150]:
 
 
 def dice_coef_torch(prob_preds, targets, beta=0.5, smooth=1e-5):
@@ -521,8 +528,8 @@ def dice_coef_torch(prob_preds, targets, beta=0.5, smooth=1e-5):
 
     intersection = (prob_preds * targets).sum()
 
-    dice = ((1 + beta**2) * intersection + smooth) / (
-        (beta**2) * prob_preds.sum() + targets.sum() + smooth
+    dice = ((1 + beta ** 2) * intersection + smooth) / (
+        (beta ** 2) * prob_preds.sum() + targets.sum() + smooth
     )
 
     return dice
@@ -538,28 +545,28 @@ class Model(pl.LightningModule):
 
         self.model = smp.Unet(
             encoder_name=encoder_name,
-            encoder_weights="imagenet",
+            # encoder_weights="imagenet",
             # encoder_weights=None,
             encoder_depth=5,
-            decoder_channels=[
-                512,
-                256,
-                128,
-                64,
-                32,
-            ],
+            decoder_channels=[512, 256, 128, 64, 32,],
             in_channels=in_channels,
             classes=out_classes,
+            # aux_params={
+            #     "classes": out_classes,
+            #     "pooling": "avg",
+            #     "dropout": 0.5,
+            #     "activation": None,
+            # }
             **kwargs,
         )
 
         self.segmentation_loss_fn = smp.losses.TverskyLoss(
             smp.losses.BINARY_MODE,
             log_loss=False,
-            from_logits=True,
+            from_logits=False,
             smooth=1e-6,
             alpha=0.5,
-            beta=0.7,
+            beta=0.6,
         )
         # self.segmentation_loss_fn = dice_coef_torch
         # self.classification_loss_fn = smp.losses.SoftCrossEntropyLoss()
@@ -592,6 +599,8 @@ class Model(pl.LightningModule):
         prob_mask = segmentation_out
         pred_mask = (prob_mask > threshold).float()
 
+        score = fbeta_score(pred_mask, labels, threshold=threshold)
+
         tp, fp, fn, tn = smp.metrics.get_stats(
             pred_mask.long(), labels.long(), mode="binary"
         )
@@ -602,6 +611,7 @@ class Model(pl.LightningModule):
             "fp": fp,
             "fn": fn,
             "tn": tn,
+            "score": score,
         }
 
     def shared_epoch_end(self, outputs, stage):
@@ -611,6 +621,7 @@ class Model(pl.LightningModule):
         fn = torch.cat([x["fn"] for x in outputs])
         tn = torch.cat([x["tn"] for x in outputs])
         loss = torch.mean(torch.Tensor([x["loss"] for x in outputs]))
+        fbeta_score = torch.mean(torch.Tensor([x["score"] for x in outputs]))
 
         per_image_iou = smp.metrics.iou_score(
             tp, fp, fn, tn, reduction="micro-imagewise"
@@ -621,11 +632,12 @@ class Model(pl.LightningModule):
         metrics = {
             f"{stage}_per_image_iou": per_image_iou,
             f"{stage}_dataset_iou": dataset_iou,
-            f"{stage}_loss": loss,
+            f"{stage}_loss": loss.item(),
             f"{stage}_tp": tp.sum().int().item(),
             f"{stage}_fp": fp.sum().int().item(),
             f"{stage}_fn": fn.sum().int().item(),
             f"{stage}_tn": tn.sum().int().item(),
+            f"{stage}_score": fbeta_score.item(),
         }
 
         self.log_dict(metrics, prog_bar=True, sync_dist=True)
@@ -696,10 +708,7 @@ class Model(pl.LightningModule):
         optimizer = optim.AdamW(self.parameters(), lr=lr)
 
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer,
-            mode="min",
-            factor=0.05,
-            patience=5,
+            optimizer, mode="min", factor=0.05, patience=5,
         )
         return {
             "optimizer": optimizer,
@@ -707,10 +716,17 @@ class Model(pl.LightningModule):
         }
 
 
-# In[ ]:
+# In[151]:
 
 
 volume_train_1.shape, labels_train_1.shape, mask_train_1.shape
+
+
+# In[152]:
+
+
+model = Model(encoder_name=backbone, in_channels=Z_DIM, out_classes=1,)
+model
 
 
 # # !export CUDA_LAUNCH_BLOCKING=1
@@ -741,25 +757,23 @@ for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
     train_mask = np.concatenate([one[2], two[2]], axis=1)
     val_volume, val_label, val_mask = data_list[val_data[0]]
 
-    train_locations_ds = generate_locations_ds(train_volume, train_mask, skip_zero=True)
+    train_locations_ds = generate_locations_ds(
+        train_volume, train_mask, train_label, skip_zero=True
+    )
     val_location_ds = generate_locations_ds(val_volume, val_mask, skip_zero=False)
 
     visualize_dataset_patches(train_locations_ds, train_label, "train", fold)
     visualize_dataset_patches(val_location_ds, val_label, "val", fold)
 
     # Init the neural network
-    model = Model(
-        encoder_name=backbone,
-        in_channels=Z_DIM,
-        out_classes=1,
-    )
+    model = Model(encoder_name=backbone, in_channels=Z_DIM, out_classes=1,)
 
     # Initialize a trainer
     trainer = pl.Trainer(
         max_epochs=num_epochs,
         devices="auto",
         accelerator="auto",
-        strategy="ddp_find_unused_parameters_false",
+        # strategy="ddp_find_unused_parameters_false",
         # strategy="ddp_fork",
         logger=WandbLogger(name=f"2.5dimension-{datetime.datetime.now()}"),
     )
@@ -769,25 +783,15 @@ for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
         train_locations_ds, train_volume, train_label, BUFFER, is_train=True
     )
     val_ds = SubvolumeDataset(
-        val_location_ds,
-        val_volume,
-        val_label,
-        BUFFER,
-        is_train=False,
+        val_location_ds, val_volume, val_label, BUFFER, is_train=False,
     )
 
     # Define data loaders for training and testing data in this fold
     train_loader = torch.utils.data.DataLoader(
-        train_ds,
-        batch_size=BATCH_SIZE,
-        num_workers=num_workers,
-        shuffle=True,
+        train_ds, batch_size=BATCH_SIZE, num_workers=num_workers, shuffle=True,
     )
     val_loader = torch.utils.data.DataLoader(
-        val_ds,
-        batch_size=BATCH_SIZE,
-        num_workers=num_workers,
-        shuffle=False,
+        val_ds, batch_size=BATCH_SIZE, num_workers=num_workers, shuffle=False,
     )
 
     # Train the model
