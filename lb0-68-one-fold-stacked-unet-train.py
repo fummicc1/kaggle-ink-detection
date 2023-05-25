@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[244]:
+# In[ ]:
 
 
 #!/usr/bin/env python
@@ -12,7 +12,7 @@
 
 # In[19]:
 
-# In[245]:
+# In[ ]:
 
 
 # import sys
@@ -27,7 +27,7 @@
 
 # In[20]:
 
-# In[246]:
+# In[ ]:
 
 
 import hashlib
@@ -37,7 +37,7 @@ from dotdict import dotdict
 from time import time
 
 
-# In[247]:
+# In[ ]:
 
 
 from collections import defaultdict
@@ -47,13 +47,13 @@ import PIL.Image as Image
 Image.MAX_IMAGE_PIXELS = 10000000000  # Ignore PIL warnings about large images
 
 
-# In[248]:
+# In[ ]:
 
 
 import cv2
 
 
-# In[249]:
+# In[ ]:
 
 
 import torch
@@ -61,7 +61,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-# In[250]:
+# In[ ]:
 
 
 from einops import rearrange, reduce, repeat
@@ -70,7 +70,7 @@ from segmentation_models_pytorch.decoders.unet.decoder import UnetDecoder, Decod
 from timm.models.resnet import resnet10t, resnet34d
 
 
-# In[251]:
+# In[ ]:
 
 
 import numpy as np
@@ -92,13 +92,13 @@ from pytorch_lightning.loggers import WandbLogger
 import os
 
 
-# In[252]:
+# In[ ]:
 
 
 from scipy.ndimage import distance_transform_edt
 
 
-# In[253]:
+# In[ ]:
 
 
 import glob
@@ -117,7 +117,7 @@ import torch.optim as optim
 import torch.utils.data
 
 
-# In[254]:
+# In[ ]:
 
 
 import matplotlib
@@ -128,7 +128,7 @@ print("import ok !!!")
 
 # In[21]:
 
-# In[255]:
+# In[ ]:
 
 
 def time_to_str(time):
@@ -140,7 +140,7 @@ def time_to_str(time):
 
 # In[22]:
 
-# In[256]:
+# In[ ]:
 
 
 class Config(object):
@@ -149,24 +149,24 @@ class Config(object):
         # 'test', 'skip_fake_test',
     ]
     crop_fade = 56
-    crop_size = 224
+    crop_size = 384
     crop_depth = 5
     infer_fragment_z = [28, 37]
     threshold = 0.5
     lr = 1e-4
-    batch_size = 3
+    batch_size = 32
     num_workers = 8
     epochs = 20
 
 
-# In[257]:
+# In[ ]:
 
 
 CFG = Config()
 CFG.is_tta = True  # True
 
 
-# In[258]:
+# In[ ]:
 
 
 if "train" in CFG.mode:
@@ -175,7 +175,7 @@ if "test" in CFG.mode:
     CFG.stride = CFG.crop_size // 2
 
 
-# In[259]:
+# In[ ]:
 
 
 def cfg_to_text():
@@ -194,7 +194,7 @@ def cfg_to_text():
     return "CFG\n" + "\n".join(text)
 
 
-# In[260]:
+# In[ ]:
 
 
 print(cfg_to_text())
@@ -204,18 +204,18 @@ print(cfg_to_text())
 
 #  dataset ##
 
-# In[261]:
+# In[ ]:
 
 
 if "train" in CFG.mode:
-    data_dir = "/home/fummicc1/codes/Kaggle/kaggle-ink-detection/train"
+    data_dir = "/home/fummicc1/codes/competitions/kaggle-ink-detection/train"
     valid_id = [
         "1",
         "2b",
     ]
     train_id = ["2a", "3"]
 if "test" in CFG.mode:
-    data_dir = "/kaggle/input/vesuvius-challenge-ink-detection/test"
+    data_dir = "/home/fummicc1/codes/competitions/kaggle-ink-detection/test"
     valid_id = glob(f"{data_dir}/*")
     valid_id = sorted(valid_id)
     valid_id = [f.split("/")[-1] for f in valid_id]
@@ -230,14 +230,14 @@ if "test" in CFG.mode:
 
 # --
 
-# In[262]:
+# In[ ]:
 
 
 print("data_dir", data_dir)
 print("valid_id", valid_id)
 
 
-# In[263]:
+# In[ ]:
 
 
 def do_binarise(m, threshold=0.5):
@@ -247,7 +247,7 @@ def do_binarise(m, threshold=0.5):
     return m
 
 
-# In[264]:
+# In[ ]:
 
 
 def read_data(fragment_id, z0=CFG.infer_fragment_z[0], z1=CFG.infer_fragment_z[1]):
@@ -297,7 +297,7 @@ def read_data(fragment_id, z0=CFG.infer_fragment_z[0], z1=CFG.infer_fragment_z[1
     return d
 
 
-# In[265]:
+# In[ ]:
 
 
 def read_data1(fragment_id):
@@ -326,7 +326,7 @@ def read_data1(fragment_id):
     return d
 
 
-# In[266]:
+# In[ ]:
 
 
 def load_mask(split, index):
@@ -339,7 +339,7 @@ def load_labels(split, index):
     return img
 
 
-# In[267]:
+# In[ ]:
 
 
 # ref - https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/397288
@@ -362,7 +362,7 @@ def fbeta_score(preds, targets, threshold, beta=0.5, smooth=1e-5):
     return dice
 
 
-# In[268]:
+# In[ ]:
 
 
 def run_check_data():
@@ -378,7 +378,7 @@ def run_check_data():
 
 # un_check_data()
 
-# In[269]:
+# In[ ]:
 
 
 print("data ok !!!")
@@ -386,7 +386,7 @@ print("data ok !!!")
 
 # ref - https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/397288
 
-# In[270]:
+# In[ ]:
 
 
 # ref - https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/397288
@@ -411,24 +411,22 @@ def fbeta_score(preds, targets, threshold, beta=0.5, smooth=1e-5):
 
 # In[ ]:
 
-# In[271]:
+# In[ ]:
 
 
 def extract(location, volume):
     global printed
     x = location[0]
     y = location[1]
-    subvolume = volume[
-        x - CFG.crop_size // 2 : x + CFG.crop_size // 2,
-        y - CFG.crop_size // 2 : y + CFG.crop_size // 2,
-        :,
-    ].astype(np.float32)
+    subvolume = volume[y : y + CFG.crop_size, x : x + CFG.crop_size, :].astype(
+        np.float32
+    )
     return subvolume
 
 
 # In[ ]:
 
-# In[272]:
+# In[ ]:
 
 
 import torch
@@ -436,13 +434,13 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import OneHotEncoder
 
 
-# In[273]:
+# In[ ]:
 
 
 from albumentations.core.transforms_interface import ImageOnlyTransform
 
 
-# In[274]:
+# In[ ]:
 
 
 def run_check_net():
@@ -451,7 +449,17 @@ def run_check_net():
     batch_size = 3
 
 
-# In[275]:
+# In[ ]:
+
+
+# x = np.arange(0,3)
+# y = np.arange(0,4)
+# x,y = np.meshgrid(x,y)
+# xy  = np.stack([x,y],-1).reshape(-1,2)
+# x, y, xy
+
+
+# In[ ]:
 
 
 import torch
@@ -486,14 +494,10 @@ class SubvolumeDataset(Dataset):
         location = np.array(self.locations[idx])
         x, y = location[0], location[1]
 
-        # print("location", location)
-
         subvolume = extract(location, self.volume)
 
         if self.labels is not None:
-            label = self.labels[
-                y - self.buffer : y + self.buffer, x - self.buffer : x + self.buffer
-            ]
+            label = self.labels[y : y + self.buffer * 2, x : x + self.buffer * 2]
             label = np.stack([label], axis=-1)
 
         if self.is_train and label is not None:
@@ -515,17 +519,42 @@ class SubvolumeDataset(Dataset):
             label = np.transpose(label, (2, 0, 1))
             subvolume /= 255.0
             subvolume = (subvolume - 0.45) / 0.225
-            return subvolume, label
         else:
             # print("subvolume in val dataset (before aug)", subvolume, file=open("before-val-aug.log", "w"))
             subvolume = np.transpose(subvolume, (2, 0, 1))
             label = np.transpose(label, (2, 0, 1))
             subvolume /= 255.0
             subvolume = (subvolume - 0.45) / 0.225
-        return subvolume, label
+        d = {
+            "volume": subvolume,
+            "label": label,
+        }
+        if len(subvolume.shape) < 3:
+            print("shhape 2 location:", location)
+        elif subvolume.shape[1] != CFG.crop_size or subvolume.shape[2] != CFG.crop_size:
+            print("location()", location)
+        return d
 
 
-# In[276]:
+# In[ ]:
+
+
+def collate_fn(batch):
+    keys = batch[0].keys()
+
+    collated_batch = {}
+    for key in keys:
+        if batch[0][key] is not None:
+            collated_batch[key] = torch.stack(
+                [torch.from_numpy(sample[key]) for sample in batch]
+            )
+        else:
+            collated_batch[key] = None
+
+    return collated_batch
+
+
+# In[ ]:
 
 
 class SmpUnetDecoder(nn.Module):
@@ -700,7 +729,7 @@ class Net(nn.Module):
 # #### infer here !!!!<br>
 # https://gist.github.com/janpaul123/ca3477c1db6de4346affca37e0e3d5b0
 
-# In[277]:
+# In[ ]:
 
 
 def mask_to_rle(mask):
@@ -719,7 +748,7 @@ def mask_to_rle(mask):
 
 # In[ ]:
 
-# In[278]:
+# In[ ]:
 
 
 def metric_to_text(ink, label, mask):
@@ -770,7 +799,7 @@ def metric_to_text(ink, label, mask):
 
 # In[ ]:
 
-# In[279]:
+# In[ ]:
 
 
 def make_infer_mask():
@@ -788,7 +817,7 @@ def make_infer_mask():
 
 # In[ ]:
 
-# In[280]:
+# In[ ]:
 
 
 class Model(pl.LightningModule):
@@ -815,7 +844,7 @@ class Model(pl.LightningModule):
         return mask
 
     def shared_step(self, batch, stage):
-        subvolumes, labels = batch
+        subvolumes, labels = batch["volume"], batch["label"]
 
         image, labels = subvolumes.float(), labels.float()
         assert image.ndim == 4
@@ -927,10 +956,10 @@ class Model(pl.LightningModule):
 #  <br>
 #
 
-# In[281]:
+# In[ ]:
 
 
-def train_one(d, val_d):
+def train_one(fragment_id, d, val_d):
     net = Model()
 
     # get coord
@@ -950,13 +979,13 @@ def train_one(d, val_d):
         pad_label = d.label
 
     pH, pW, _ = pad_volume.shape
-    x = np.arange(crop_size // 2, pW - crop_size // 2 + 1, stride)
-    y = np.arange(crop_size // 2, pH - crop_size // 2 + 1, stride)
+    x = np.arange(0, pW - crop_size + 1, stride)
+    y = np.arange(0, pH - crop_size + 1, stride)
     x, y = np.meshgrid(x, y)
     xy = np.stack([x, y], -1).reshape(-1, 2)
     print("H,W,pH,pW,len(xy)", H, W, pH, pW, len(xy))
 
-    val_H, val_W, val_D = d.volume.shape
+    val_H, val_W, val_D = val_d.volume.shape
 
     ##pad #assume H,W >size
     val_px, val_py = val_W % stride, val_H % stride
@@ -964,22 +993,29 @@ def train_one(d, val_d):
         val_px = stride - val_px
         val_py = stride - val_py
         pad_val_volume = np.pad(
-            val_d.volume, [(0, py), (0, px), (0, 0)], constant_values=0
+            val_d.volume, [(0, val_py), (0, val_px), (0, 0)], constant_values=0
         )
-        pad_val_label = np.pad(val_d.label, [(0, py), (0, px)], constant_values=0)
+        pad_val_label = np.pad(
+            val_d.label, [(0, val_py), (0, val_px)], constant_values=0
+        )
     else:
         pad_val_volume = val_d.volume
         pad_val_label = val_d.label
 
     val_pH, val_pW, _ = pad_val_volume.shape
-    val_x = np.arange(crop_size // 2, val_pW - crop_size // 2 + 1, stride)
-    val_y = np.arange(crop_size // 2, val_pH - crop_size // 2 + 1, stride)
+    val_x = np.arange(0, val_pW - crop_size + 1, stride)
+    val_y = np.arange(0, val_pH - crop_size + 1, stride)
     val_x, val_y = np.meshgrid(val_x, val_y)
     val_xy = np.stack([val_x, val_y], -1).reshape(-1, 2)
 
-    print(f"val_xy.max(): {val_xy.max()}")
-    print(f"pad_val_label.shape(): {pad_val_label.shape}")
-    print(f"pad_val_volume.shape(): {pad_val_volume.shape}")
+    print(
+        "val_H,val_W,val_pH,val_pW,len(val_xy)",
+        val_H,
+        val_W,
+        val_pH,
+        val_pW,
+        len(val_xy),
+    )
 
     train_ds = SubvolumeDataset(
         locations=xy,
@@ -1002,14 +1038,18 @@ def train_one(d, val_d):
         batch_size=CFG.batch_size,
         num_workers=CFG.num_workers,
         shuffle=True,
+        collate_fn=collate_fn,
     )
     val_loader = torch.utils.data.DataLoader(
         val_ds,
         batch_size=CFG.batch_size,
         num_workers=CFG.num_workers,
         shuffle=False,
+        collate_fn=collate_fn,
     )
     trainer = pl.Trainer(
+        accelerator="gpu",
+        devices="0,1,2,3",
         max_epochs=CFG.epochs,
         logger=WandbLogger(name=f"2.5d-stack-unet-{datetime.datetime.now()}"),
         strategy="ddp_find_unused_parameters_true",
@@ -1019,12 +1059,16 @@ def train_one(d, val_d):
         train_loader,
         val_loader,
     )
+    torch.save(
+        net.model.state_dict(),
+        os.path.join(data_dir, "weights", f"lb0-68-train-{fragment_id}.pth"),
+    )
 
 
-# In[282]:
+# In[ ]:
 
 
 for t, fragment_id in enumerate(train_id):
     d = read_data1(fragment_id)
     val_d = read_data1(valid_id[0])
-    train_one(d, val_d)
+    train_one(fragment_id, d, val_d)
