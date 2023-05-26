@@ -5,7 +5,7 @@
 
 # ## Setup
 
-# In[133]:
+# In[1]:
 
 
 import numpy as np
@@ -24,6 +24,11 @@ import pytorch_lightning.plugins
 from skimage.transform import resize as resize_ski
 from pytorch_lightning.strategies.ddp import DDPStrategy
 from pytorch_lightning.loggers import WandbLogger
+from einops import rearrange, reduce, repeat
+import torch.nn.functional as F
+import segmentation_models_pytorch as smp
+from segmentation_models_pytorch.decoders.unet.decoder import UnetDecoder, DecoderBlock
+from timm.models.resnet import resnet10t, resnet34d
 import os
 
 
@@ -49,61 +54,61 @@ import torch.optim as optim
 import torch.utils.data
 
 
-# Data config
-# DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
-# DATA_DIR = '/home/fummicc1/codes/competitions/kaggle-ink-detection'
-DATA_DIR = "/home/fummicc1/codes/Kaggle/kaggle-ink-detection"
-BUFFER = 128  # Half-size of papyrus patches we'll use as model inputs
-# Z_LIST = list(range(0, 20, 5)) + list(range(22, 34))  # Offset of slices in the z direction
-Z_LIST = list(range(24, 36))
-# Z_LIST = list(range(0, 24, 8)) + list(range(24, 36, 2)) + list(range(36, 64, 10))
-Z_DIM = len(Z_LIST)  # Number of slices in the z direction. Max value is 64 - Z_START
-SHARED_HEIGHT = 3200  # Max height to resize all papyrii
+class CFG:
+    # Data config
+    # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
+    # DATA_DIR = '/home/fummicc1/codes/competitions/kaggle-ink-detection'
+    DATA_DIR = "/home/fummicc1/codes/Kaggle/kaggle-ink-detection"
+    BUFFER = 112  # Half-size of papyrus patches we'll use as model inputs
+    # Z_LIST = list(range(0, 20, 5)) + list(range(22, 34))  # Offset of slices in the z direction
+    Z_LIST = list(range(28, 37, 2))
+    # Z_LIST = list(range(0, 24, 8)) + list(range(24, 36, 2)) + list(range(36, 64, 10))
+    Z_DIM = len(
+        Z_LIST
+    )  # Number of slices in the z direction. Max value is 64 - Z_START
+    SHARED_HEIGHT = 4800  # Max height to resize all papyrii
 
-# Model config
-BATCH_SIZE = 64
+    # Model config
+    BATCH_SIZE = 6
 
-# backbone = "mit_b2"
-# backbone = "efficientnet-b5"
-backbone = "se_resnext50_32x4d"
-# backbone = "resnext50_32x4d"
-# backbone = "resnet50"
+    # backbone = "mit_b2"
+    # backbone = "efficientnet-b5"
+    backbone = "se_resnext50_32x4d"
+    # backbone = "resnext50_32x4d"
+    # backbone = "resnet50"
 
-device = torch.device("cuda")
-threshold = 0.45
-num_workers = 8
-exp = 1e-7
-mask_padding = 200
+    device = torch.device("cuda")
+    threshold = 0.5
+    num_workers = 8
+    exp = 1e-7
+    mask_padding = 200
 
-num_epochs = 50
-lr = 1e-3
-
-pytorch_lightning.seed_everything(seed=42)
-torch.set_float32_matmul_precision("high")
+    num_epochs = 20
+    lr = 1e-3
 
 
-# In[134]:
+# In[2]:
 
 
 # plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
 # plt.imshow(Image.open(DATA_DIR + "/train/2/ir.png"), cmap="gray")
 # plt.imshow(Image.open(DATA_DIR + "/train/3/ir.png"), cmap="gray")
-plt.imshow(Image.open(DATA_DIR + "/test/a/mask.png"), cmap="gray")
+# plt.imshow(Image.open(CFG.DATA_DIR + "/test/a/mask.png"), cmap="gray")
 # plt.imshow(Image.open(DATA_DIR + "/test/b/mask.png"), cmap="gray")
 
 
 # ## Load up the training data
 
-# In[135]:
+# In[3]:
 
 
 def resize(img):
     current_height, current_width = img.shape
     aspect_ratio = current_width / current_height
-    if SHARED_HEIGHT is None:
+    if CFG.SHARED_HEIGHT is None:
         return img
-    new_height = SHARED_HEIGHT
-    new_width = int(SHARED_HEIGHT * aspect_ratio)
+    new_height = CFG.SHARED_HEIGHT
+    new_width = int(CFG.SHARED_HEIGHT * aspect_ratio)
     new_size = (new_width, new_height)
     # (W, H)の順で渡すが結果は(H, W)になっている
     img = cv2.resize(img, new_size)
@@ -111,33 +116,19 @@ def resize(img):
 
 
 def load_mask(split, index):
-    img = cv2.imread(f"{DATA_DIR}/{split}/{index}/mask.png", 0) // 255
+    img = cv2.imread(f"{CFG.DATA_DIR}/{split}/{index}/mask.png", 0) // 255
     img = np.pad(img, 1, constant_values=0)
     dist = distance_transform_edt(img)
-    img[dist <= mask_padding] = 0
+    img[dist <= CFG.mask_padding] = 0
     img = img[1:-1, 1:-1]
     img = resize(img)
     return img
 
 
 def load_labels(split, index):
-    img = cv2.imread(f"{DATA_DIR}/{split}/{index}/inklabels.png", 0) // 255
+    img = cv2.imread(f"{CFG.DATA_DIR}/{split}/{index}/inklabels.png", 0) // 255
     img = resize(img)
     return img
-
-
-masks = load_mask(split="train", index=1)
-labels = load_labels(split="train", index=1)
-
-fig, (ax1, ax2) = plt.subplots(1, 2)
-ax1.set_title("mask.png")
-ax1.imshow(masks, cmap="gray")
-ax2.set_title("inklabels.png")
-ax2.imshow(labels, cmap="gray")
-plt.show()
-
-
-# In[136]:
 
 
 # input shape: (H, W, C)
@@ -148,66 +139,21 @@ def rotate90(volume: np.ndarray, k=None, reverse=False):
         volume = np.rot90(volume, 1 if not reverse else 3)
     height = volume.shape[0]
     width = volume.shape[1]
-    new_height = SHARED_HEIGHT
+    new_height = CFG.SHARED_HEIGHT
     new_width = int(new_height * width / height)
     if len(volume.shape) == 2:
         return cv2.resize(volume, (new_width, new_height))
     return resize_ski(volume, (new_height, new_width, volume.shape[2]))
 
 
-# In[137]:
-
-
-mask_test_a = load_mask(split="test", index="a")
-mask_test_b = load_mask(split="test", index="b")
-
-mask_train_1 = load_mask(split="train", index=1)
-labels_train_1 = load_labels(split="train", index=1)
-
-mask_train_2 = load_mask(split="train", index=2)
-labels_train_2 = load_labels(split="train", index=2)
-
-mask_train_3 = load_mask(split="train", index=3)
-labels_train_3 = load_labels(split="train", index=3)
-
-print(f"mask_test_a: {mask_test_a.shape}")
-print(f"mask_test_b: {mask_test_b.shape}")
-print("-")
-print(f"mask_train_1: {mask_train_1.shape}")
-print(f"labels_train_1: {labels_train_1.shape}")
-print("-")
-print(f"mask_train_2: {mask_train_2.shape}")
-print(f"labels_train_2: {labels_train_2.shape}")
-print("-")
-print(f"mask_train_3: {mask_train_3.shape}")
-print(f"labels_train_3: {labels_train_3.shape}")
-
-
-# In[138]:
-
-
-fig, (ax1, ax2, ax3) = plt.subplots(1, 3)
-
-ax1.set_title("labels_train_1")
-ax1.imshow(labels_train_1, cmap="gray")
-
-ax2.set_title("labels_train_2")
-ax2.imshow(labels_train_2, cmap="gray")
-
-ax3.set_title("labels_train_3")
-ax3.imshow(labels_train_3, cmap="gray")
-plt.tight_layout()
-plt.show()
-
-
-# In[139]:
+# In[7]:
 
 
 def load_volume(split, index):
     # Load the 3d x-ray scan, one slice at a time
-    all = sorted(glob.glob(f"{DATA_DIR}/{split}/{index}/surface_volume/*.tif"))
-    z_slices_fnames = [all[i] for i in range(len(all)) if i in Z_LIST]
-    assert len(z_slices_fnames) == Z_DIM
+    all = sorted(glob.glob(f"{CFG.DATA_DIR}/{split}/{index}/surface_volume/*.tif"))
+    z_slices_fnames = [all[i] for i in range(len(all)) if i in CFG.Z_LIST]
+    assert len(z_slices_fnames) == CFG.Z_DIM
     z_slices = []
     for z, filename in tqdm(enumerate(z_slices_fnames)):
         img = cv2.imread(filename, -1)
@@ -218,17 +164,7 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[140]:
-
-
-volume_train_1 = load_volume(split="train", index=1)
-print(f"volume_train_1: {volume_train_1.shape}, {volume_train_1.dtype}")
-
-volume_train_2 = load_volume(split="train", index=2)
-print(f"volume_train_2: {volume_train_2.shape}, {volume_train_2.dtype}")
-
-volume_train_3 = load_volume(split="train", index=3)
-print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
+# In[8]:
 
 # volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1)
 # volume = np.concatenate([volume_train_1, volume_train_2], axis=1)
@@ -238,14 +174,14 @@ print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 # ## Create a dataset in the input volume
 #
 
-# In[141]:
+# In[9]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[142]:
+# In[10]:
 
 
 def generate_locations_ds(volume, mask, label=None, skip_zero=False):
@@ -257,12 +193,17 @@ def generate_locations_ds(volume, mask, label=None, skip_zero=False):
     # Generate train locations
     volume_height, volume_width = volume.shape[:-1]
 
-    for y in range(BUFFER, volume_height - BUFFER, int(BUFFER / 2)):
-        for x in range(BUFFER, volume_width - BUFFER, int(BUFFER / 2)):
+    for y in range(CFG.BUFFER, volume_height - CFG.BUFFER, int(CFG.BUFFER / 2)):
+        for x in range(CFG.BUFFER, volume_width - CFG.BUFFER, int(CFG.BUFFER / 2)):
             if (
                 skip_zero
                 and label is not None
-                and np.all(label[y - BUFFER : y + BUFFER, x - BUFFER : x + BUFFER] == 0)
+                and np.all(
+                    label[
+                        y - CFG.BUFFER : y + CFG.BUFFER, x - CFG.BUFFER : x + CFG.BUFFER
+                    ]
+                    == 0
+                )
             ):
                 continue
             if is_in_mask_train((y, x)):
@@ -277,41 +218,40 @@ def generate_locations_ds(volume, mask, label=None, skip_zero=False):
 #
 # Sanity check visually that our patches are where they should be.
 
-# In[143]:
+# In[11]:
 
 
 def extract_subvolume(location, volume):
     global printed
-    x = location[0]
-    y = location[1]
-    subvolume = volume[x - BUFFER : x + BUFFER, y - BUFFER : y + BUFFER, :].astype(
-        np.float32
-    )
+    y = location[0]
+    x = location[1]
+    subvolume = volume[
+        y - CFG.BUFFER : y + CFG.BUFFER, x - CFG.BUFFER : x + CFG.BUFFER, :
+    ].astype(np.float32)
 
     return subvolume
 
 
-# In[144]:
+# In[12]:
 
 
-import torch
-import numpy as np
+# import torch
+# import numpy as np
+# x = torch.from_numpy(np.array([[[[1, 2], [2, 9],]]]))
+# shape = x.shape
+# print(x.shape)
+# x=[x,*[torch.rot90(x,k=i,dims=(-2,-1)) for i in range(1,4)]]
+# x = torch.cat(x, dim=1)
+# print(x.shape)
+# x=x.reshape(4,shape[0],*shape[2:])
+# print(x.shape)
+# x=[torch.rot90(x[i],k=-i,dims=(-2,-1)) for i in range(4)]
+# x=torch.stack(x,dim=0)
+# print(x.shape)
+# x.mean(0, dtype=torch.float32, keepdim=True).shape
 
-x = torch.from_numpy(np.array([[[[1, 2], [2, 9],]]]))
-shape = x.shape
-print(x.shape)
-x = [x, *[torch.rot90(x, k=i, dims=(-2, -1)) for i in range(1, 4)]]
-x = torch.cat(x, dim=1)
-print(x.shape)
-x = x.reshape(4, shape[0], *shape[2:])
-print(x.shape)
-x = [torch.rot90(x[i], k=-i, dims=(-2, -1)) for i in range(4)]
-x = torch.stack(x, dim=0)
-print(x.shape)
-x.mean(0, dtype=torch.float32, keepdim=True).shape
 
-
-# In[145]:
+# In[13]:
 
 
 tc = torch
@@ -323,7 +263,6 @@ def TTA(x: tc.Tensor, model: nn.Module):
     x = [x, *[tc.rot90(x, k=i, dims=(-2, -1)) for i in range(1, 4)]]
     x = tc.cat(x, dim=0)
     x = model(x)
-    x = torch.sigmoid(x)
     x = x.reshape(4, shape[0], 1, *shape[2:])
     x = [tc.rot90(x[i], k=4 - i, dims=(-2, -1)) for i in range(4)]
     x = tc.stack(x, dim=0)
@@ -332,7 +271,7 @@ def TTA(x: tc.Tensor, model: nn.Module):
 
 # ## SubvolumeDataset
 
-# In[146]:
+# In[14]:
 
 
 import torch
@@ -422,7 +361,7 @@ class SubvolumeDataset(Dataset):
 #
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[147]:
+# In[15]:
 
 
 def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
@@ -431,9 +370,9 @@ def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
 
     for y, x in locations_ds:
         patch = patches.Rectangle(
-            [x - BUFFER, y - BUFFER],
-            2 * BUFFER,
-            2 * BUFFER,
+            [x - CFG.BUFFER, y - CFG.BUFFER],
+            2 * CFG.BUFFER,
+            2 * CFG.BUFFER,
             linewidth=2,
             edgecolor="g",
             facecolor="none",
@@ -450,49 +389,12 @@ def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
 
 # ## Dataset check
 
-# In[148]:
-
-
-sample_locations = generate_locations_ds(
-    volume_train_1, mask_train_1, labels_train_1, skip_zero=True
-)
-sample_ds = SubvolumeDataset(
-    sample_locations, volume_train_1, labels_train_1, BUFFER, is_train=True,
-)
-
-img = sample_ds[148][0][10, :, :]
-plt.imshow(img)
-
-fig, ax = plt.subplots(figsize=(8, 6))
-
-ax.imshow(labels_train_1)
-
-y, x = sample_locations[150]
-patch = patches.Rectangle(
-    [x - BUFFER, y - BUFFER],
-    2 * BUFFER,
-    2 * BUFFER,
-    linewidth=2,
-    edgecolor="g",
-    facecolor="none",
-)
-ax.add_patch(patch)
-plt.show()
-
-fig, ax = plt.subplots(Z_DIM, 1, figsize=(12, 24))
-
-for i in range(Z_DIM):
-    img, _ = sample_ds[148]
-    img = img[i, :, :]
-    ax[i].hist(img.flatten(), bins=1000)  # Plot histogram of the flattened data
-    ax[i].set_title(f"Histogram of Channel {i}")  # Add title to the plot
-fig.tight_layout()
-fig.show()
+# In[16]:
 
 
 # ## Model
 
-# In[149]:
+# In[17]:
 
 
 # ref - https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/397288
@@ -515,7 +417,168 @@ def fbeta_score(preds, targets, threshold, beta=0.5, smooth=1e-5):
     return dice
 
 
-# In[150]:
+# In[18]:
+
+
+class SmpUnetDecoder(nn.Module):
+    def __init__(
+        self,
+        in_channel,
+        skip_channel,
+        out_channel,
+    ):
+        super().__init__()
+        self.center = nn.Identity()
+
+        i_channel = [
+            in_channel,
+        ] + out_channel[:-1]
+        s_channel = skip_channel
+        o_channel = out_channel
+        block = [
+            DecoderBlock(i, s, o, use_batchnorm=True, attention_type=None)
+            for i, s, o in zip(i_channel, s_channel, o_channel)
+        ]
+        self.block = nn.ModuleList(block)
+
+    def forward(self, feature, skip):
+        d = self.center(feature)
+        decode = []
+        for i, block in enumerate(self.block):
+            s = skip[i]
+            d = block(d, s)
+            decode.append(d)
+
+        last = d
+        return last, decode
+
+
+class Net(nn.Module):
+    def __init__(
+        self,
+    ):
+        super().__init__()
+        self.output_type = ["inference", "loss"]
+
+        conv_dim = 64
+        encoder1_dim = [
+            conv_dim,
+            256,
+            512,
+            1024,
+            2048,
+        ]
+        decoder1_dim = [
+            1024,
+            512,
+            256,
+            64,
+        ]
+
+        self.encoder1 = resnet34d(pretrained=False, in_chans=CFG.Z_DIM)
+
+        self.decoder1 = SmpUnetDecoder(
+            in_channel=encoder1_dim[-1],
+            skip_channel=encoder1_dim[:-1][::-1],
+            out_channel=decoder1_dim,
+        )
+        # -- pool attention weight
+        self.weight1 = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv2d(dim, dim, kernel_size=3, padding=1),
+                    nn.ReLU(inplace=True),
+                )
+                for dim in encoder1_dim
+            ]
+        )
+        self.logit1 = nn.Conv2d(decoder1_dim[-1], 1, kernel_size=1)
+
+        # --------------------------------
+        #
+        encoder2_dim = [64, 128, 256, 512]  #
+        decoder2_dim = [
+            128,
+            64,
+            32,
+        ]
+        self.encoder2 = resnet10t(pretrained=False, in_chans=decoder1_dim[-1])
+
+        self.decoder2 = SmpUnetDecoder(
+            in_channel=encoder2_dim[-1],
+            skip_channel=encoder2_dim[:-1][::-1],
+            out_channel=decoder2_dim,
+        )
+        self.logit2 = nn.Conv2d(decoder2_dim[-1], 1, kernel_size=1)
+
+    def forward(self, batch):
+        v = batch
+        B, C, H, W = v.shape
+        vv = [v[:, 0 : CFG.Z_DIM]]
+        K = len(vv)
+        x = torch.cat(vv, 0)
+        # x = v
+
+        # ----------------------
+        encoder = []
+        e = self.encoder1
+        x = e.conv1(x)
+        x = e.bn1(x)
+        x = e.act1(x)
+        encoder.append(x)
+        x = F.avg_pool2d(x, kernel_size=2, stride=2)
+        x = e.layer1(x)
+        encoder.append(x)
+        x = e.layer2(x)
+        encoder.append(x)
+        x = e.layer3(x)
+        encoder.append(x)
+        x = e.layer4(x)
+        encoder.append(x)
+        # print('encoder', [f.shape for f in encoder])
+
+        for i in range(len(encoder)):
+            e = encoder[i]
+            f = self.weight1[i](e)
+            _, c, h, w = e.shape
+            f = rearrange(f, "(K B) c h w -> B K c h w", K=K, B=B, h=h, w=w)  #
+            e = rearrange(e, "(K B) c h w -> B K c h w", K=K, B=B, h=h, w=w)  #
+            w = F.softmax(f, 1)
+            e = (w * e).sum(1)
+            encoder[i] = e
+
+        feature = encoder[-1]
+        skip = encoder[:-1][::-1]
+        last, decoder = self.decoder1(feature, skip)
+        logit1 = self.logit1(last)
+
+        # ----------------------
+        x = last  # .detach()
+        # x = F.avg_pool2d(x,kernel_size=2,stride=2)
+        encoder = []
+        e = self.encoder2
+        x = e.layer1(x)
+        encoder.append(x)
+        x = e.layer2(x)
+        encoder.append(x)
+        x = e.layer3(x)
+        encoder.append(x)
+        x = e.layer4(x)
+        encoder.append(x)
+
+        feature = encoder[-1]
+        skip = encoder[:-1][::-1]
+        last, decoder = self.decoder2(feature, skip)
+        logit2 = self.logit2(last)
+        logit2 = F.interpolate(
+            logit2, size=(H, W), mode="bilinear", align_corners=False, antialias=True
+        )
+
+        output = torch.sigmoid(logit2)
+        return output
+
+
+# In[23]:
 
 
 def dice_coef_torch(prob_preds, targets, beta=0.5, smooth=1e-5):
@@ -528,8 +591,8 @@ def dice_coef_torch(prob_preds, targets, beta=0.5, smooth=1e-5):
 
     intersection = (prob_preds * targets).sum()
 
-    dice = ((1 + beta ** 2) * intersection + smooth) / (
-        (beta ** 2) * prob_preds.sum() + targets.sum() + smooth
+    dice = ((1 + beta**2) * intersection + smooth) / (
+        (beta**2) * prob_preds.sum() + targets.sum() + smooth
     )
 
     return dice
@@ -540,25 +603,10 @@ class Model(pl.LightningModule):
     validation_step_outputs = []
     test_step_outputs = [[], []]
 
-    def __init__(self, encoder_name, in_channels, out_classes, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__()
 
-        self.model = smp.Unet(
-            encoder_name=encoder_name,
-            # encoder_weights="imagenet",
-            # encoder_weights=None,
-            encoder_depth=5,
-            decoder_channels=[512, 256, 128, 64, 32,],
-            in_channels=in_channels,
-            classes=out_classes,
-            # aux_params={
-            #     "classes": out_classes,
-            #     "pooling": "avg",
-            #     "dropout": 0.5,
-            #     "activation": None,
-            # }
-            **kwargs,
-        )
+        self.model = Net()
 
         self.segmentation_loss_fn = smp.losses.TverskyLoss(
             smp.losses.BINARY_MODE,
@@ -576,7 +624,6 @@ class Model(pl.LightningModule):
             mask = TTA(image, self.model)
         else:
             mask = self.model(image)
-            mask = torch.sigmoid(mask)
         return mask
 
     def shared_step(self, batch, stage):
@@ -594,12 +641,16 @@ class Model(pl.LightningModule):
 
         segmentation_out = self.forward(image, stage)
 
+        # print("segmentation_out", segmentation_out.shape)
+
         loss = self.segmentation_loss_fn(segmentation_out, labels)
 
         prob_mask = segmentation_out
-        pred_mask = (prob_mask > threshold).float()
+        pred_mask = (prob_mask > CFG.threshold).float()
 
-        score = fbeta_score(pred_mask, labels, threshold=threshold)
+        # print("pred_mask", pred_mask)
+
+        score = fbeta_score(pred_mask, labels, threshold=CFG.threshold)
 
         tp, fp, fn, tn = smp.metrics.get_stats(
             pred_mask.long(), labels.long(), mode="binary"
@@ -692,23 +743,26 @@ class Model(pl.LightningModule):
 
         for (y, x), pred in zip(locs, preds):
             new_predictions_map[
-                y - BUFFER : y + BUFFER, x - BUFFER : x + BUFFER
+                y - CFG.BUFFER : y + CFG.BUFFER, x - CFG.BUFFER : x + CFG.BUFFER
             ] += pred
             new_predictions_map_counts[
-                y - BUFFER : y + BUFFER, x - BUFFER : x + BUFFER
+                y - CFG.BUFFER : y + CFG.BUFFER, x - CFG.BUFFER : x + CFG.BUFFER
             ] += 1
 
-        new_predictions_map /= new_predictions_map_counts + exp
+        new_predictions_map /= new_predictions_map_counts + CFG.exp
         new_predictions_map = new_predictions_map[:, :, np.newaxis]
         predictions_map = np.concatenate(
             [predictions_map, new_predictions_map], axis=-1
         )
 
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=lr)
+        optimizer = optim.AdamW(self.parameters(), lr=CFG.lr)
 
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", factor=0.05, patience=5,
+            optimizer,
+            mode="min",
+            factor=0.05,
+            patience=5,
         )
         return {
             "optimizer": optimizer,
@@ -716,83 +770,111 @@ class Model(pl.LightningModule):
         }
 
 
-# In[151]:
+# In[24]:
 
 
-volume_train_1.shape, labels_train_1.shape, mask_train_1.shape
-
-
-# In[152]:
-
-
-model = Model(encoder_name=backbone, in_channels=Z_DIM, out_classes=1,)
-model
-
+# In[25]:
 
 # # !export CUDA_LAUNCH_BLOCKING=1
 # # !export TORCH_USE_CUDA_DSA=1
 
 #
 
-# In[ ]:
+# In[27]:
 
+if __name__ == "__main__":
+    pytorch_lightning.seed_everything(seed=42)
+    torch.set_float32_matmul_precision("high")
+    masks = load_mask(split="train", index=1)
+    labels = load_labels(split="train", index=1)
 
-k_folds = 3
-kfold = KFold(n_splits=k_folds, shuffle=True)
-data_list = [
-    (volume_train_1, labels_train_1, mask_train_1),
-    (volume_train_2, labels_train_2, mask_train_2),
-    (volume_train_3, labels_train_3, mask_train_3),
-]
+    mask_test_a = load_mask(split="test", index="a")
+    mask_test_b = load_mask(split="test", index="b")
 
-for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
-    print(f"FOLD {fold}")
-    print("--------------------------------")
-    print("train_data", train_data)
-    print("val_data", val_data)
-    one = data_list[train_data[0]]
-    two = data_list[train_data[1]]
-    train_volume = np.concatenate([one[0], two[0]], axis=1)
-    train_label = np.concatenate([one[1], two[1]], axis=1)
-    train_mask = np.concatenate([one[2], two[2]], axis=1)
-    val_volume, val_label, val_mask = data_list[val_data[0]]
+    mask_train_1 = load_mask(split="train", index=1)
+    labels_train_1 = load_labels(split="train", index=1)
 
-    train_locations_ds = generate_locations_ds(
-        train_volume, train_mask, train_label, skip_zero=True
-    )
-    val_location_ds = generate_locations_ds(val_volume, val_mask, skip_zero=False)
+    mask_train_2 = load_mask(split="train", index=2)
+    labels_train_2 = load_labels(split="train", index=2)
 
-    visualize_dataset_patches(train_locations_ds, train_label, "train", fold)
-    visualize_dataset_patches(val_location_ds, val_label, "val", fold)
+    mask_train_3 = load_mask(split="train", index=3)
+    labels_train_3 = load_labels(split="train", index=3)
 
-    # Init the neural network
-    model = Model(encoder_name=backbone, in_channels=Z_DIM, out_classes=1,)
+    volume_train_1 = load_volume(split="train", index=1)
 
-    # Initialize a trainer
-    trainer = pl.Trainer(
-        max_epochs=num_epochs,
-        devices="auto",
-        accelerator="auto",
-        # strategy="ddp_find_unused_parameters_false",
-        # strategy="ddp_fork",
-        logger=WandbLogger(name=f"2.5dimension-{datetime.datetime.now()}"),
-    )
+    volume_train_2 = load_volume(split="train", index=2)
 
-    # Sample elements randomly from a given list of ids, no replacement.
-    train_ds = SubvolumeDataset(
-        train_locations_ds, train_volume, train_label, BUFFER, is_train=True
-    )
-    val_ds = SubvolumeDataset(
-        val_location_ds, val_volume, val_label, BUFFER, is_train=False,
-    )
+    volume_train_3 = load_volume(split="train", index=3)
 
-    # Define data loaders for training and testing data in this fold
-    train_loader = torch.utils.data.DataLoader(
-        train_ds, batch_size=BATCH_SIZE, num_workers=num_workers, shuffle=True,
-    )
-    val_loader = torch.utils.data.DataLoader(
-        val_ds, batch_size=BATCH_SIZE, num_workers=num_workers, shuffle=False,
-    )
+    k_folds = 3
+    kfold = KFold(n_splits=k_folds, shuffle=True)
+    data_list = [
+        (volume_train_1, labels_train_1, mask_train_1),
+        (volume_train_2, labels_train_2, mask_train_2),
+        (volume_train_3, labels_train_3, mask_train_3),
+    ]
 
-    # Train the model
-    trainer.fit(model, train_loader, val_loader)
+    for fold, (train_data, val_data) in enumerate(kfold.split(data_list)):
+        print(f"FOLD {fold}")
+        print("--------------------------------")
+        print("train_data", train_data)
+        print("val_data", val_data)
+        one = data_list[train_data[0]]
+        two = data_list[train_data[1]]
+        train_volume = np.concatenate([one[0], two[0]], axis=1)
+        train_label = np.concatenate([one[1], two[1]], axis=1)
+        train_mask = np.concatenate([one[2], two[2]], axis=1)
+        val_volume, val_label, val_mask = data_list[val_data[0]]
+
+        train_locations_ds = generate_locations_ds(
+            train_volume, train_mask, train_label, skip_zero=True
+        )
+        val_location_ds = generate_locations_ds(val_volume, val_mask, skip_zero=False)
+
+        visualize_dataset_patches(train_locations_ds, train_label, "train", fold)
+        visualize_dataset_patches(val_location_ds, val_label, "val", fold)
+
+        # Init the neural network
+        model = Model()
+
+        # Initialize a trainer
+        trainer = pl.Trainer(
+            max_epochs=CFG.num_epochs,
+            devices="0,1,2",
+            accelerator="gpu",
+            # strategy="ddp_find_unused_parameters_false",
+            # strategy="ddp_find_unused_parameters_false",
+            # strategy="ddp_fork",
+            # logger=WandbLogger(name=f"2.5dimension-{datetime.datetime.now()}"),
+        )
+
+        # Sample elements randomly from a given list of ids, no replacement.
+        train_ds = SubvolumeDataset(
+            train_locations_ds, train_volume, train_label, CFG.BUFFER, is_train=True
+        )
+        val_ds = SubvolumeDataset(
+            val_location_ds,
+            val_volume,
+            val_label,
+            CFG.BUFFER,
+            is_train=False,
+        )
+
+        # Define data loaders for training and testing data in this fold
+        train_loader = torch.utils.data.DataLoader(
+            train_ds,
+            batch_size=CFG.BATCH_SIZE,
+            num_workers=CFG.num_workers,
+            shuffle=True,
+        )
+        val_loader = torch.utils.data.DataLoader(
+            val_ds,
+            batch_size=CFG.BATCH_SIZE,
+            num_workers=CFG.num_workers,
+            shuffle=False,
+        )
+
+        # Train the model
+        trainer.fit(model, train_loader, val_loader)
+
+        del trainer, model, train_ds, val_ds, train_loader, val_loader
