@@ -192,6 +192,15 @@ def cfg_to_text():
     return "CFG\n" + "\n".join(text)
 
 
+# In[ ]:
+
+#  dataset ##
+
+# --
+
+# In[ ]:
+
+
 def do_binarise(m, threshold=0.5):
     m = m - m.min()
     m = m / (m.max() + 1e-7)
@@ -330,33 +339,7 @@ def run_check_data():
 
 # un_check_data()
 
-# In[ ]:
-
-
 # ref - https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/397288
-
-# In[ ]:
-
-
-# ref - https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/397288
-def fbeta_score(preds, targets, threshold, beta=0.5, smooth=1e-5):
-    preds_t = torch.where(preds > threshold, 1.0, 0.0).float()
-    y_true_count = targets.sum()
-
-    ctp = preds_t[targets == 1].sum()
-    cfp = preds_t[targets == 0].sum()
-    beta_squared = beta * beta
-
-    c_precision = ctp / (ctp + cfp + smooth)
-    c_recall = ctp / (y_true_count + smooth)
-    dice = (
-        (1 + beta_squared)
-        * (c_precision * c_recall)
-        / (beta_squared * c_precision + c_recall + smooth)
-    )
-
-    return dice
-
 
 # In[ ]:
 
@@ -457,8 +440,7 @@ class SubvolumeDataset(Dataset):
                     A.Transpose(p=0.5),
                     A.RandomScale(p=0.5),
                     A.RandomRotate90(p=0.5),
-                    A.ShiftScaleRotate(p=0.75),
-                    # A.GridDropout(p=0.15),
+                    A.ShiftScaleRotate(p=0.5),
                     A.Resize(height=self.buffer * 2, width=self.buffer * 2),
                 ]
             )(image=subvolume, mask=label)
@@ -667,8 +649,13 @@ class Net(nn.Module):
             logit2, size=(H, W), mode="bilinear", align_corners=False, antialias=True
         )
 
+        logit1 = F.interpolate(
+            logit1, size=(H, W), mode="bilinear", align_corners=False, antialias=True
+        )
+
         output = {
-            "ink": torch.sigmoid(logit2),
+            "logit1": logit1,
+            "logit2": logit2,
         }
         return output
 
@@ -779,17 +766,11 @@ class Model(pl.LightningModule):
 
         self.model = Net()
 
-        self.segmentation_loss_fn = smp.losses.TverskyLoss(
-            smp.losses.BINARY_MODE,
-            log_loss=False,
-            from_logits=False,
-            smooth=1e-6,
-            alpha=0.5,
-            beta=0.6,
-        )
+        self.loss1 = nn.BCEWithLogitsLoss(pos_weight=0.5)
+        self.loss2 = nn.BCEWithLogitsLoss(pos_weight=0.5)
 
     def forward(self, image, stage):
-        mask = self.model(image)["ink"]
+        mask = self.model(image)
         return mask
 
     def shared_step(self, batch, stage):
@@ -807,11 +788,15 @@ class Model(pl.LightningModule):
 
         segmentation_out = self.forward(image, stage)
 
-        loss = self.segmentation_loss_fn(segmentation_out, labels)
+        loss = self.loss1(segmentation_out["logit1"], labels) + self.loss2(
+            segmentation_out["logit2"], labels
+        )
 
-        score = fbeta_score(segmentation_out, labels, CFG.threshold)
+        prob = segmentation_out["logit2"].sigmoid()
 
-        pred_mask = (segmentation_out > CFG.threshold).float()
+        score = fbeta_score(prob, labels, CFG.threshold)
+
+        pred_mask = (prob > CFG.threshold).float()
 
         tp, fp, fn, tn = smp.metrics.get_stats(
             pred_mask.long(), labels.long(), mode="binary"
@@ -900,15 +885,10 @@ class Model(pl.LightningModule):
 
 # In[ ]:
 
-#
-# <br>
-#  <br>
-#
-
 # In[ ]:
 
 
-def train_one(fragment_id, d, val_d):
+def train_one(d, val_d):
     net = Model()
 
     # get coord
@@ -997,32 +977,31 @@ def train_one(fragment_id, d, val_d):
         collate_fn=collate_fn,
     )
     trainer = pl.Trainer(
+        max_epochs=CFG.epochs,
         accelerator="gpu",
         devices="0,1,2,3",
-        max_epochs=CFG.epochs,
         logger=WandbLogger(name=f"2.5d-stack-unet-{datetime.datetime.now()}"),
-        # strategy="ddp_find_unused_parameters_true",
+        # strategy='ddp_find_unused_parameters_true',
     )
     trainer.fit(
         net,
         train_loader,
         val_loader,
     )
-    torch.save(
-        net.model.state_dict(),
-        os.path.join(data_dir, "..", "weights", f"lb0-68-train-{fragment_id}.pth"),
-    )
 
 
 # In[ ]:
 
 if __name__ == "__main__":
+    print(cfg_to_text())
+
     if "train" in CFG.mode:
         data_dir = "/home/fummicc1/codes/competitions/kaggle-ink-detection/train"
         valid_id = [
             "1",
+            "2b",
         ]
-        train_id = ["2a", "3", "2b"]
+        train_id = ["2a", "3"]
     if "test" in CFG.mode:
         data_dir = "/home/fummicc1/codes/competitions/kaggle-ink-detection/test"
         valid_id = glob(f"{data_dir}/*")
@@ -1036,13 +1015,9 @@ if __name__ == "__main__":
         is_skip_test = hash_md5 == "0b0fffdc0e88be226673846a143bb3e0"
         print("is_skip_test:", is_skip_test)
 
-    # --
-
     # In[ ]:
 
-    print("data_dir", data_dir)
-    print("valid_id", valid_id)
     for t, fragment_id in enumerate(train_id):
         d = read_data1(fragment_id)
         val_d = read_data1(valid_id[0])
-        train_one(fragment_id, d, val_d)
+        train_one(d, val_d)
