@@ -196,10 +196,12 @@ train_fragments = [train_path / fragment_name for fragment_name in ["1"]]
 # In[ ]:
 
 
-# #### Sanity check 
+# #### Sanity check
 
 # In[ ]:
-train_dset = SubvolumeDataset(fragments=train_fragments, voxel_shape=(48, 64, 64), filter_edge_pixels=True)
+train_dset = SubvolumeDataset(
+    fragments=train_fragments, voxel_shape=(48, 64, 64), filter_edge_pixels=True
+)
 
 index = 6136130
 train_dset.plot_label(index, figsize=(16, 10))
@@ -232,21 +234,25 @@ class InkDetector(torch.nn.Module):
         paddings = [1, 1, 1]
         kernel_sizes = [3, 3, 3]
         strides = [2, 2, 2]
-        
+
         layers = []
         in_channels = 1
-        for num_filters, padding, kernel_size, stride in zip(filters, paddings, kernel_sizes, strides):
-            layers.extend([
-                nn.Conv3d(
-                    in_channels=in_channels,
-                    out_channels=num_filters,
-                    kernel_size=kernel_size,
-                    stride=stride,
-                    padding=padding,
-                ),
-                nn.ReLU(inplace=True),
-                torch.nn.BatchNorm3d(num_features=num_filters)
-            ])
+        for num_filters, padding, kernel_size, stride in zip(
+            filters, paddings, kernel_sizes, strides
+        ):
+            layers.extend(
+                [
+                    nn.Conv3d(
+                        in_channels=in_channels,
+                        out_channels=num_filters,
+                        kernel_size=kernel_size,
+                        stride=stride,
+                        padding=padding,
+                    ),
+                    nn.ReLU(inplace=True),
+                    torch.nn.BatchNorm3d(num_features=num_filters),
+                ]
+            )
             in_channels = num_filters
         layers.append(nn.AdaptiveAvgPool3d(1))
         layers.append(nn.Flatten())
@@ -257,7 +263,7 @@ class InkDetector(torch.nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(128, 128),
             nn.ReLU(inplace=True),
-            nn.Linear(128, 1)
+            nn.Linear(128, 1),
         )
 
     def forward(self, x):
@@ -278,13 +284,13 @@ model = InkDetector().to(DEVICE)
 
 TRAINING_STEPS = 60000
 LEARNING_RATE = 1e-3
-TRAIN_RUN = True # To avoid re-running when saving the notebook
+TRAIN_RUN = True  # To avoid re-running when saving the notebook
 
 
 # In[ ]:
 
 
-warnings.simplefilter('ignore', UndefinedMetricWarning)
+warnings.simplefilter("ignore", UndefinedMetricWarning)
 
 
 # In[ ]:
@@ -293,7 +299,9 @@ warnings.simplefilter('ignore', UndefinedMetricWarning)
 if TRAIN_RUN:
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=LEARNING_RATE, total_steps=TRAINING_STEPS)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer, max_lr=LEARNING_RATE, total_steps=TRAINING_STEPS
+    )
     model.train()
     running_loss = 0.0
     running_accuracy = 0.0
@@ -311,15 +319,23 @@ if TRAIN_RUN:
         scheduler.step()
         pred_ink = outputs.detach().sigmoid().gt(0.4).cpu().int()
         accuracy = (pred_ink == inklabels).sum().float().div(inklabels.size(0))
-        running_fbeta += fbeta_score(inklabels.view(-1).numpy(), pred_ink.view(-1).numpy(), beta=0.5)
+        running_fbeta += fbeta_score(
+            inklabels.view(-1).numpy(), pred_ink.view(-1).numpy(), beta=0.5
+        )
         running_accuracy += accuracy.item()
         running_loss += loss.item()
         denom += 1
-        pbar.set_postfix({"Loss": running_loss / denom, "Accuracy": running_accuracy / denom, "Fbeta@0.5": running_fbeta / denom})
+        pbar.set_postfix(
+            {
+                "Loss": running_loss / denom,
+                "Accuracy": running_accuracy / denom,
+                "Fbeta@0.5": running_fbeta / denom,
+            }
+        )
         if (i + 1) % 500 == 0:
-            running_loss = 0.
-            running_accuracy = 0.
-            running_fbeta = 0.
+            running_loss = 0.0
+            running_accuracy = 0.0
+            running_fbeta = 0.0
             denom = 0
 
     torch.save(model.state_dict(), "/workspace/model.pt")
@@ -356,7 +372,9 @@ pred_images = []
 model.eval()
 for test_fragment in test_fragments:
     outputs = []
-    eval_dset = SubvolumeDataset(fragments=[test_fragment], voxel_shape=(48, 64, 64), load_inklabels=False)
+    eval_dset = SubvolumeDataset(
+        fragments=[test_fragment], voxel_shape=(48, 64, 64), load_inklabels=False
+    )
     eval_loader = thd.DataLoader(eval_dset, batch_size=BATCH_SIZE, shuffle=False)
     with torch.no_grad():
         for i, (subvolumes, _) in enumerate(tqdm(eval_loader)):
@@ -371,10 +389,10 @@ for test_fragment in test_fragments:
 
     pred_image = np.zeros(image_shape, dtype=np.uint8)
     outputs = np.concatenate(outputs)
-    for (y, x, _), prob in zip(eval_dset.pixels[:outputs.shape[0]], outputs):
-        pred_image[y ,x] = prob > 0.4
+    for (y, x, _), prob in zip(eval_dset.pixels[: outputs.shape[0]], outputs):
+        pred_image[y, x] = prob > 0.4
     pred_images.append(pred_image)
-    
+
     eval_dset.pixels = None
     del eval_dset
     gc.collect()
@@ -384,7 +402,7 @@ for test_fragment in test_fragments:
 # In[ ]:
 
 
-plt.imshow(pred_images[1], cmap='gray')
+plt.imshow(pred_images[1], cmap="gray")
 
 
 # ### Submission
@@ -417,4 +435,3 @@ pd.DataFrame.from_dict(submission).to_csv("/workspace/submission.csv", index=Fal
 
 
 pd.DataFrame.from_dict(submission)
-
