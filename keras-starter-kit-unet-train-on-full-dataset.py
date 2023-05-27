@@ -28,7 +28,7 @@ from einops import rearrange, reduce, repeat
 import torch.nn.functional as F
 import segmentation_models_pytorch as smp
 from segmentation_models_pytorch.decoders.unet.decoder import UnetDecoder, DecoderBlock
-from timm.models.resnet import resnet10t, resnet34d
+from timm.models.resnet import resnet10t, resnet34d, resnet50d
 import os
 
 
@@ -59,9 +59,9 @@ class CFG:
     # DATA_DIR = '/kaggle/input/vesuvius-challenge-ink-detection/'
     # DATA_DIR = '/home/fummicc1/codes/competitions/kaggle-ink-detection'
     DATA_DIR = "/home/fummicc1/codes/Kaggle/kaggle-ink-detection"
-    BUFFER = 112  # Half-size of papyrus patches we'll use as model inputs
+    BUFFER = 160  # Half-size of papyrus patches we'll use as model inputs
     # Z_LIST = list(range(0, 20, 5)) + list(range(22, 34))  # Offset of slices in the z direction
-    Z_LIST = list(range(28, 37, 2))
+    Z_LIST = list(range(28, 37))
     # Z_LIST = list(range(0, 24, 8)) + list(range(24, 36, 2)) + list(range(36, 64, 10))
     Z_DIM = len(
         Z_LIST
@@ -69,7 +69,7 @@ class CFG:
     SHARED_HEIGHT = 4800  # Max height to resize all papyrii
 
     # Model config
-    BATCH_SIZE = 6
+    BATCH_SIZE = 36
 
     # backbone = "mit_b2"
     # backbone = "efficientnet-b5"
@@ -84,22 +84,12 @@ class CFG:
     mask_padding = 200
 
     num_epochs = 20
-    lr = 1e-3
-
-
-# In[2]:
-
-
-# plt.imshow(Image.open(DATA_DIR + "/train/1/ir.png"), cmap="gray")
-# plt.imshow(Image.open(DATA_DIR + "/train/2/ir.png"), cmap="gray")
-# plt.imshow(Image.open(DATA_DIR + "/train/3/ir.png"), cmap="gray")
-# plt.imshow(Image.open(CFG.DATA_DIR + "/test/a/mask.png"), cmap="gray")
-# plt.imshow(Image.open(DATA_DIR + "/test/b/mask.png"), cmap="gray")
+    lr = 5e-4
 
 
 # ## Load up the training data
 
-# In[3]:
+# In[2]:
 
 
 def resize(img):
@@ -116,7 +106,16 @@ def resize(img):
 
 
 def load_mask(split, index):
+    if index == "2a" or index == "2b":
+        mode = index[1]
+        index = "2"
     img = cv2.imread(f"{CFG.DATA_DIR}/{split}/{index}/mask.png", 0) // 255
+    if index == "2":
+        h = 9456
+        if mode == "a":
+            img = img[h:, :]
+        elif mode == "b":
+            img = img[:h, :]
     img = np.pad(img, 1, constant_values=0)
     dist = distance_transform_edt(img)
     img[dist <= CFG.mask_padding] = 0
@@ -126,9 +125,21 @@ def load_mask(split, index):
 
 
 def load_labels(split, index):
+    if index == "2a" or index == "2b":
+        mode = index[1]
+        index = "2"
     img = cv2.imread(f"{CFG.DATA_DIR}/{split}/{index}/inklabels.png", 0) // 255
+    if index == "2":
+        h = 9456
+        if mode == "a":
+            img = img[h:, :]
+        elif mode == "b":
+            img = img[:h, :]
     img = resize(img)
     return img
+
+
+# In[3]:
 
 
 # input shape: (H, W, C)
@@ -146,10 +157,13 @@ def rotate90(volume: np.ndarray, k=None, reverse=False):
     return resize_ski(volume, (new_height, new_width, volume.shape[2]))
 
 
-# In[7]:
+# In[4]:
 
 
 def load_volume(split, index):
+    if index == "2a" or index == "2b":
+        mode = index[1]
+        index = "2"
     # Load the 3d x-ray scan, one slice at a time
     all = sorted(glob.glob(f"{CFG.DATA_DIR}/{split}/{index}/surface_volume/*.tif"))
     z_slices_fnames = [all[i] for i in range(len(all)) if i in CFG.Z_LIST]
@@ -157,6 +171,12 @@ def load_volume(split, index):
     z_slices = []
     for z, filename in tqdm(enumerate(z_slices_fnames)):
         img = cv2.imread(filename, -1)
+        if index == "2":
+            h = 9456
+            if mode == "a":
+                img = img[h:, :]
+            elif mode == "b":
+                img = img[:h, :]
         img = resize(img)
         # img = (img / (2 ** 8)).astype(np.uint8)
         img = img.astype(np.float32) // 255
@@ -164,24 +184,17 @@ def load_volume(split, index):
     return np.stack(z_slices, axis=-1)
 
 
-# In[8]:
-
-# volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1)
-# volume = np.concatenate([volume_train_1, volume_train_2], axis=1)
-# print(f"total volume: {volume.shape}")
-
-
 # ## Create a dataset in the input volume
 #
 
-# In[9]:
+# In[5]:
 
 
 def is_in_masked_zone(location, mask):
     return mask[location[0], location[1]] > 0
 
 
-# In[10]:
+# In[6]:
 
 
 def generate_locations_ds(volume, mask, label=None, skip_zero=False):
@@ -218,7 +231,7 @@ def generate_locations_ds(volume, mask, label=None, skip_zero=False):
 #
 # Sanity check visually that our patches are where they should be.
 
-# In[11]:
+# In[7]:
 
 
 def extract_subvolume(location, volume):
@@ -232,46 +245,9 @@ def extract_subvolume(location, volume):
     return subvolume
 
 
-# In[12]:
-
-
-# import torch
-# import numpy as np
-# x = torch.from_numpy(np.array([[[[1, 2], [2, 9],]]]))
-# shape = x.shape
-# print(x.shape)
-# x=[x,*[torch.rot90(x,k=i,dims=(-2,-1)) for i in range(1,4)]]
-# x = torch.cat(x, dim=1)
-# print(x.shape)
-# x=x.reshape(4,shape[0],*shape[2:])
-# print(x.shape)
-# x=[torch.rot90(x[i],k=-i,dims=(-2,-1)) for i in range(4)]
-# x=torch.stack(x,dim=0)
-# print(x.shape)
-# x.mean(0, dtype=torch.float32, keepdim=True).shape
-
-
-# In[13]:
-
-
-tc = torch
-
-
-def TTA(x: tc.Tensor, model: nn.Module):
-    # x.shape=(batch,c,h,w)
-    shape = x.shape
-    x = [x, *[tc.rot90(x, k=i, dims=(-2, -1)) for i in range(1, 4)]]
-    x = tc.cat(x, dim=0)
-    x = model(x)
-    x = x.reshape(4, shape[0], 1, *shape[2:])
-    x = [tc.rot90(x[i], k=4 - i, dims=(-2, -1)) for i in range(4)]
-    x = tc.stack(x, dim=0)
-    return x.mean(0)
-
-
 # ## SubvolumeDataset
 
-# In[14]:
+# In[8]:
 
 
 import torch
@@ -322,7 +298,7 @@ class SubvolumeDataset(Dataset):
                     A.Transpose(p=0.5),
                     A.RandomScale(p=0.5),
                     A.RandomRotate90(p=0.5),
-                    A.ShiftScaleRotate(p=0.75),
+                    A.ShiftScaleRotate(p=0.6),
                     # A.GridDistortion(p=0.1),
                     # A.CoarseDropout(
                     #     max_holes=1,
@@ -331,7 +307,7 @@ class SubvolumeDataset(Dataset):
                     #     mask_fill_value=0,
                     #     p=0.5,
                     # ),
-                    A.GridDropout(p=0.15),
+                    # A.GridDropout(p=0.15),
                     A.Resize(height=self.buffer * 2, width=self.buffer * 2),
                 ]
             )(image=subvolume, mask=label)
@@ -340,18 +316,18 @@ class SubvolumeDataset(Dataset):
             subvolume = np.transpose(subvolume, (2, 0, 1))
             label = np.transpose(label, (2, 0, 1))
             subvolume /= 255.0
-            subvolume = (subvolume - 0.45) / 0.225
+            subvolume = (subvolume - 0.3) / 0.22
         else:
             if label is None:
                 subvolume = np.transpose(subvolume, (2, 0, 1))
                 subvolume /= 255.0
-                subvolume = (subvolume - 0.45) / 0.225
+                subvolume = (subvolume - 0.3) / 0.22
             else:
                 # print("subvolume in val dataset (before aug)", subvolume, file=open("before-val-aug.log", "w"))
                 subvolume = np.transpose(subvolume, (2, 0, 1))
                 label = np.transpose(label, (2, 0, 1))
                 subvolume /= 255.0
-                subvolume = (subvolume - 0.45) / 0.225
+                subvolume = (subvolume - 0.3) / 0.22
         if self.return_location:
             return subvolume, location
         return subvolume, label
@@ -361,7 +337,7 @@ class SubvolumeDataset(Dataset):
 #
 # Note that they are partially overlapping, since the stride is half the patch size.
 
-# In[15]:
+# In[9]:
 
 
 def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
@@ -389,12 +365,9 @@ def visualize_dataset_patches(locations_ds, labels, mode: str, fold=0):
 
 # ## Dataset check
 
-# In[16]:
-
-
 # ## Model
 
-# In[17]:
+# In[10]:
 
 
 # ref - https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/397288
@@ -417,7 +390,7 @@ def fbeta_score(preds, targets, threshold, beta=0.5, smooth=1e-5):
     return dice
 
 
-# In[18]:
+# In[11]:
 
 
 class SmpUnetDecoder(nn.Module):
@@ -463,15 +436,15 @@ class Net(nn.Module):
         conv_dim = 64
         encoder1_dim = [
             conv_dim,
+            64,
+            128,
             256,
             512,
-            1024,
-            2048,
         ]
         decoder1_dim = [
-            1024,
-            512,
             256,
+            128,
+            64,
             64,
         ]
 
@@ -514,7 +487,7 @@ class Net(nn.Module):
     def forward(self, batch):
         v = batch
         B, C, H, W = v.shape
-        vv = [v[:, 0 : CFG.Z_DIM]]
+        vv = [v[:, i : CFG.Z_DIM] for i in range(0, 2, 4)]
         K = len(vv)
         x = torch.cat(vv, 0)
         # x = v
@@ -552,6 +525,10 @@ class Net(nn.Module):
         last, decoder = self.decoder1(feature, skip)
         logit1 = self.logit1(last)
 
+        logit1 = F.interpolate(
+            logit1, size=(H, W), mode="bilinear", align_corners=False, antialias=True
+        )
+
         # ----------------------
         x = last  # .detach()
         # x = F.avg_pool2d(x,kernel_size=2,stride=2)
@@ -573,12 +550,10 @@ class Net(nn.Module):
         logit2 = F.interpolate(
             logit2, size=(H, W), mode="bilinear", align_corners=False, antialias=True
         )
-
-        output = torch.sigmoid(logit2)
-        return output
+        return logit1, logit2
 
 
-# In[23]:
+# In[12]:
 
 
 def dice_coef_torch(prob_preds, targets, beta=0.5, smooth=1e-5):
@@ -608,22 +583,13 @@ class Model(pl.LightningModule):
 
         self.model = Net()
 
-        self.segmentation_loss_fn = smp.losses.TverskyLoss(
-            smp.losses.BINARY_MODE,
-            log_loss=False,
-            from_logits=False,
-            smooth=1e-6,
-            alpha=0.5,
-            beta=0.6,
-        )
+        self.loss1 = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([0.7]))
+        self.loss2 = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([0.7]))
         # self.segmentation_loss_fn = dice_coef_torch
         # self.classification_loss_fn = smp.losses.SoftCrossEntropyLoss()
 
     def forward(self, image, stage):
-        if stage != "train":
-            mask = TTA(image, self.model)
-        else:
-            mask = self.model(image)
+        mask = self.model(image)
         return mask
 
     def shared_step(self, batch, stage):
@@ -639,14 +605,15 @@ class Model(pl.LightningModule):
 
         assert labels.max() <= 1.0 and labels.min() >= 0
 
-        segmentation_out = self.forward(image, stage)
+        logit1, logit2 = self.forward(image, stage)
 
         # print("segmentation_out", segmentation_out.shape)
 
-        loss = self.segmentation_loss_fn(segmentation_out, labels)
+        loss = self.loss1(logit1, labels) + self.loss2(logit2, labels)
 
-        prob_mask = segmentation_out
-        pred_mask = (prob_mask > CFG.threshold).float()
+        prob2 = torch.sigmoid(logit2)
+
+        pred_mask = (prob2 > CFG.threshold).float()
 
         # print("pred_mask", pred_mask)
 
@@ -761,8 +728,8 @@ class Model(pl.LightningModule):
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
             mode="min",
-            factor=0.05,
-            patience=5,
+            factor=0.75,
+            patience=3,
         )
         return {
             "optimizer": optimizer,
@@ -770,47 +737,145 @@ class Model(pl.LightningModule):
         }
 
 
-# In[24]:
+# In[13]:
 
-
-# In[25]:
-
-# # !export CUDA_LAUNCH_BLOCKING=1
-# # !export TORCH_USE_CUDA_DSA=1
-
-#
-
-# In[27]:
 
 if __name__ == "__main__":
+    model = Model()
+    model
+
+    # # !export CUDA_LAUNCH_BLOCKING=1
+    # # !export TORCH_USE_CUDA_DSA=1
+
+    #
+
+    # In[14]:
+
     pytorch_lightning.seed_everything(seed=42)
     torch.set_float32_matmul_precision("high")
+
     masks = load_mask(split="train", index=1)
     labels = load_labels(split="train", index=1)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2)
+    ax1.set_title("mask.png")
+    ax1.imshow(masks, cmap="gray")
+    ax2.set_title("inklabels.png")
+    ax2.imshow(labels, cmap="gray")
+    plt.show()
 
     mask_test_a = load_mask(split="test", index="a")
     mask_test_b = load_mask(split="test", index="b")
 
-    mask_train_1 = load_mask(split="train", index=1)
-    labels_train_1 = load_labels(split="train", index=1)
+    mask_train_1 = load_mask(split="train", index="1")
+    labels_train_1 = load_labels(split="train", index="1")
 
-    mask_train_2 = load_mask(split="train", index=2)
-    labels_train_2 = load_labels(split="train", index=2)
+    mask_train_2a = load_mask(split="train", index="2a")
+    labels_train_2a = load_labels(split="train", index="2a")
 
-    mask_train_3 = load_mask(split="train", index=3)
-    labels_train_3 = load_labels(split="train", index=3)
+    mask_train_2b = load_mask(split="train", index="2b")
+    labels_train_2b = load_labels(split="train", index="2b")
+
+    mask_train_3 = load_mask(split="train", index="3")
+    labels_train_3 = load_labels(split="train", index="3")
+
+    print(f"mask_test_a: {mask_test_a.shape}")
+    print(f"mask_test_b: {mask_test_b.shape}")
+    print("-")
+    print(f"mask_train_1: {mask_train_1.shape}")
+    print(f"labels_train_1: {labels_train_1.shape}")
+    print("-")
+    print(f"mask_train_2a: {mask_train_2a.shape}")
+    print(f"labels_train_2a: {labels_train_2a.shape}")
+    print("-")
+    print(f"mask_train_2b: {mask_train_2b.shape}")
+    print(f"labels_train_2b: {labels_train_2b.shape}")
+    print("-")
+    print(f"mask_train_3: {mask_train_3.shape}")
+    print(f"labels_train_3: {labels_train_3.shape}")
+
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4)
+
+    ax1.set_title("labels_train_1")
+    ax1.imshow(labels_train_1, cmap="gray")
+
+    ax2.set_title("labels_train_2a")
+    ax2.imshow(labels_train_2a, cmap="gray")
+
+    ax3.set_title("labels_train_2b")
+    ax3.imshow(labels_train_2b, cmap="gray")
+
+    ax4.set_title("labels_train_3")
+    ax4.imshow(labels_train_3, cmap="gray")
+    plt.tight_layout()
+    plt.show()
 
     volume_train_1 = load_volume(split="train", index=1)
+    print(f"volume_train_1: {volume_train_1.shape}, {volume_train_1.dtype}")
 
-    volume_train_2 = load_volume(split="train", index=2)
+    volume_train_2a = load_volume(split="train", index="2a")
+    print(f"volume_train_2a: {volume_train_2a.shape}, {volume_train_2a.dtype}")
+
+    volume_train_2b = load_volume(split="train", index="2b")
+    print(f"volume_train_2b: {volume_train_2b.shape}, {volume_train_2b.dtype}")
 
     volume_train_3 = load_volume(split="train", index=3)
+    print(f"volume_train_3: {volume_train_3.shape}, {volume_train_3.dtype}")
 
-    k_folds = 3
+    # volume = np.concatenate([volume_train_1, volume_train_2, volume_train_3], axis=1)
+    # volume = np.concatenate([volume_train_1, volume_train_2], axis=1)
+    # print(f"total volume: {volume.shape}")
+
+    # In[15]:
+
+    sample_locations = generate_locations_ds(
+        volume_train_3, mask_train_3, labels_train_3, skip_zero=True
+    )
+    sample_ds = SubvolumeDataset(
+        sample_locations,
+        volume_train_3,
+        labels_train_3,
+        CFG.BUFFER,
+        is_train=True,
+    )
+
+    img = sample_ds[148][0][0, :, :]
+    plt.imshow(img)
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    ax.imshow(labels_train_1)
+
+    y, x = sample_locations[150]
+    patch = patches.Rectangle(
+        [x - CFG.BUFFER, y - CFG.BUFFER],
+        2 * CFG.BUFFER,
+        2 * CFG.BUFFER,
+        linewidth=2,
+        edgecolor="g",
+        facecolor="none",
+    )
+    ax.add_patch(patch)
+    plt.show()
+
+    fig, ax = plt.subplots(CFG.Z_DIM, 1, figsize=(12, 24))
+
+    for i in range(CFG.Z_DIM):
+        img, _ = sample_ds[148]
+        img = img[i, :, :]
+        ax[i].hist(img.flatten(), bins=1000)  # Plot histogram of the flattened data
+        ax[i].set_title(f"Histogram of Channel {i}")  # Add title to the plot
+    fig.tight_layout()
+    fig.show()
+
+    # In[16]:
+
+    k_folds = 4
     kfold = KFold(n_splits=k_folds, shuffle=True)
     data_list = [
+        (volume_train_2a, labels_train_2a, mask_train_2a),
         (volume_train_1, labels_train_1, mask_train_1),
-        (volume_train_2, labels_train_2, mask_train_2),
+        (volume_train_2b, labels_train_2b, mask_train_2b),
         (volume_train_3, labels_train_3, mask_train_3),
     ]
 
@@ -821,9 +886,10 @@ if __name__ == "__main__":
         print("val_data", val_data)
         one = data_list[train_data[0]]
         two = data_list[train_data[1]]
-        train_volume = np.concatenate([one[0], two[0]], axis=1)
-        train_label = np.concatenate([one[1], two[1]], axis=1)
-        train_mask = np.concatenate([one[2], two[2]], axis=1)
+        three = data_list[train_data[2]]
+        train_volume = np.concatenate([one[0], two[0], three[0]], axis=1)
+        train_label = np.concatenate([one[1], two[1], three[1]], axis=1)
+        train_mask = np.concatenate([one[2], two[2], three[2]], axis=1)
         val_volume, val_label, val_mask = data_list[val_data[0]]
 
         train_locations_ds = generate_locations_ds(
@@ -843,9 +909,8 @@ if __name__ == "__main__":
             devices="0,1,2",
             accelerator="gpu",
             # strategy="ddp_find_unused_parameters_false",
-            # strategy="ddp_find_unused_parameters_false",
             # strategy="ddp_fork",
-            # logger=WandbLogger(name=f"2.5dimension-{datetime.datetime.now()}"),
+            logger=WandbLogger(name=f"2.5dimension-{datetime.datetime.now()}"),
         )
 
         # Sample elements randomly from a given list of ids, no replacement.
@@ -876,5 +941,3 @@ if __name__ == "__main__":
 
         # Train the model
         trainer.fit(model, train_loader, val_loader)
-
-        del trainer, model, train_ds, val_ds, train_loader, val_loader
