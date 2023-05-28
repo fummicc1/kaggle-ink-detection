@@ -22,3 +22,4 @@ train-2.zarr
 train-3.zarr
 *.mp4
 compress_data
+*.ckpt
