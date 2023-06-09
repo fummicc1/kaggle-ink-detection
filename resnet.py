@@ -1,7 +1,9 @@
+import math
+from functools import partial
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from functools import partial
 
 
 def get_inplanes():
@@ -55,7 +57,9 @@ class Bottleneck(nn.Module):
     expansion = 4
 
     def __init__(self, in_planes, planes, stride=1, downsample=None):
+        # print("initializing Bottleneck...")
         super().__init__()
+        # print("super initialized Bottleneck")
 
         self.conv1 = conv1x1x1(in_planes, planes)
         self.bn1 = nn.BatchNorm3d(planes)
@@ -99,14 +103,22 @@ class ResNet(nn.Module):
         n_input_channels=3,
         conv1_t_size=7,
         conv1_t_stride=1,
+        no_max_pool=False,
         shortcut_type="B",
         widen_factor=1.0,
+        n_classes=400,
     ):
         super().__init__()
+
+        # print("resnet is initializing...")
+        # print("param:", block, layers, block_inplanes)
 
         block_inplanes = [int(x * widen_factor) for x in block_inplanes]
 
         self.in_planes = block_inplanes[0]
+        self.no_max_pool = no_max_pool
+
+        # print("in_planes", self.in_planes)
 
         self.conv1 = nn.Conv3d(
             n_input_channels,
@@ -118,41 +130,25 @@ class ResNet(nn.Module):
         )
         self.bn1 = nn.BatchNorm3d(self.in_planes)
         self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool3d(
-            kernel_size=(1, 3, 3), stride=(1, 2, 2), padding=(0, 1, 1)
-        )
+        self.maxpool = nn.MaxPool3d(kernel_size=3, stride=2, padding=1)
+        # print("ckcp1")
         self.layer1 = self._make_layer(
-            block,
-            block_inplanes[0],
-            layers[0],
-            shortcut_type,
-            stride=(1, 1, 1),
-            downsample=False,
+            block, block_inplanes[0], layers[0], shortcut_type
         )
+        # print("ckcp2")
         self.layer2 = self._make_layer(
-            block,
-            block_inplanes[1],
-            layers[1],
-            shortcut_type,
-            stride=(1, 2, 2),
-            downsample=True,
+            block, block_inplanes[1], layers[1], shortcut_type, stride=2
         )
+        # print("ckcp3")
         self.layer3 = self._make_layer(
-            block,
-            block_inplanes[2],
-            layers[2],
-            shortcut_type,
-            stride=(1, 2, 2),
-            downsample=True,
+            block, block_inplanes[2], layers[2], shortcut_type, stride=2
         )
         self.layer4 = self._make_layer(
-            block,
-            block_inplanes[3],
-            layers[3],
-            shortcut_type,
-            stride=(1, 2, 2),
-            downsample=True,
+            block, block_inplanes[3], layers[3], shortcut_type, stride=2
         )
+
+        self.avgpool = nn.AdaptiveAvgPool3d((1, 1, 1))
+        self.fc = nn.Linear(block_inplanes[3] * block.expansion, n_classes)
 
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
@@ -160,6 +156,8 @@ class ResNet(nn.Module):
             elif isinstance(m, nn.BatchNorm3d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
+
+        # print("resnet is initialized!")
 
     def _downsample_basic_block(self, x, planes, stride):
         out = F.avg_pool3d(x, kernel_size=1, stride=stride)
@@ -173,28 +171,29 @@ class ResNet(nn.Module):
 
         return out
 
-    def _make_layer(self, block, planes, blocks, shortcut_type, stride, downsample):
-        downsample_block = None
-        if downsample:
+    def _make_layer(self, block, planes, blocks, shortcut_type, stride=1):
+        downsample = None
+        if stride != 1 or self.in_planes != planes * block.expansion:
             if shortcut_type == "A":
-                downsample_block = partial(
+                downsample = partial(
                     self._downsample_basic_block,
                     planes=planes * block.expansion,
                     stride=stride,
                 )
             else:
-                downsample_block = nn.Sequential(
+                downsample = nn.Sequential(
                     conv1x1x1(self.in_planes, planes * block.expansion, stride),
                     nn.BatchNorm3d(planes * block.expansion),
                 )
 
         layers = []
+        # print("block:", block)
         layers.append(
             block(
                 in_planes=self.in_planes,
                 planes=planes,
                 stride=stride,
-                downsample=downsample_block,
+                downsample=downsample,
             )
         )
         self.in_planes = planes * block.expansion
@@ -207,14 +206,20 @@ class ResNet(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.maxpool(x)
+        if not self.no_max_pool:
+            x = self.maxpool(x)
 
-        x1 = self.layer1(x)
-        x2 = self.layer2(x1)
-        x3 = self.layer3(x2)
-        x4 = self.layer4(x3)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
 
-        return [x1, x2, x3, x4]
+        x = self.avgpool(x)
+
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+
+        return x
 
 
 def generate_model(model_depth, **kwargs):

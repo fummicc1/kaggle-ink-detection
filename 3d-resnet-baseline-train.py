@@ -48,7 +48,7 @@ ROOT_DIR = "/home/fummicc1/codes/Kaggle/kaggle-ink-detection"
 sys.path.append(ROOT_DIR)
 
 # sys.path.append("/kaggle/input/resnet3d")
-from resnet3d import generate_model
+from resnet import generate_model
 import torch as tc
 
 
@@ -523,7 +523,10 @@ class Model(pl.LightningModule):
         self.model = model
 
         self.segmentation_loss_fn = smp.losses.TverskyLoss(
-            smp.losses.BINARY_MODE, log_loss=False, from_logits=True, smooth=1e-6,
+            smp.losses.BINARY_MODE,
+            log_loss=False,
+            from_logits=True,
+            smooth=1e-6,
         )
 
     def forward(self, image):
